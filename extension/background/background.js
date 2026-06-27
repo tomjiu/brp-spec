@@ -22,6 +22,11 @@
   // Navigation sentinel only applies to these tabs — user's own browsing is untouched.
   const agentTabIds = new Set();
 
+  // Clean up agentTabIds when tabs are closed (prevents unbounded growth and tab ID reuse)
+  browser.tabs.onRemoved.addListener((tabId) => {
+    agentTabIds.delete(tabId);
+  });
+
   // ─── Auth Token ───
 
   /**

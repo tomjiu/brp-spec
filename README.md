@@ -174,22 +174,40 @@ The Bridge implements BRP RFC0001 (Draft). Key features:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BRP_WS_ADDR` | `127.0.0.1:9817` | WebSocket server address for Extension |
-| `BRP_AUTH_TOKEN` | _(unset)_ | Optional auth token. If set, Extension must provide it on registration. |
+| `BRP_AUTH_TOKEN` | _(auto-generated)_ | Override the auto-generated token. Bridge always requires a token; if unset, a UUID v4 is generated and written to the token file. |
+| `BRP_TOKEN_FILE` | Platform-specific | Override token file path (Windows: `%APPDATA%\brp-bridge\token`, Linux/macOS: `~/.brp-bridge-token`) |
 | `BRP_ALLOW_SCRIPT_EXECUTE` | `0` | Set to `1` to enable `script.execute` (disabled by default for security) |
 | `BRP_STANDALONE` | `0` | Set to `1` to run Bridge as pure WS server (no stdin/stdout) |
 | `RUST_LOG` | `info` | Log level (error/warn/info/debug/trace) |
+
+## First-Run Authentication Setup
+
+Token authentication is **mandatory**. The Bridge auto-generates a UUID v4 token on startup and writes it to a file. The Extension must be configured with this token before it can connect.
+
+1. Start the Bridge (via MCP adapter or standalone). Check the logs for the token file path:
+   ```
+   [Auth] Token written to /home/user/.brp-bridge-token
+   ```
+
+2. Open the Extension Options page (right-click the BRP extension icon → Options).
+
+3. Copy the token from the file and paste it into the Options page, then click Save.
+
+4. The Extension will reconnect with the token and authenticate successfully.
+
+Alternatively, set `BRP_AUTH_TOKEN` before starting the Bridge to use a fixed token you control.
 
 ## Security
 
 See [`SECURITY.md`](SECURITY.md) for the full threat model, security invariants, and known risks, and [`docs/SECURITY-ARCHITECTURE-DECISIONS.md`](docs/SECURITY-ARCHITECTURE-DECISIONS.md) for the v0.3.0 hardening roadmap.
 
 - **Origin Validation**: The WebSocket server validates the `Origin` header on every connection, rejecting non-extension origins (defends against CSWSH and DNS rebinding attacks).
-- **Optional Token Auth**: Set `BRP_AUTH_TOKEN` to require token authentication. The Extension must provide the matching token on registration (configurable via the Extension's Options page). In Native Messaging mode, Origin validation is the primary defense.
+- **Mandatory Token Auth**: The Bridge always requires a token. On startup, a UUID v4 token is auto-generated and written to a platform-specific file (0600 permissions). Override with `BRP_AUTH_TOKEN`. The Extension must provide the matching token on registration (configurable via the Extension's Options page). Token comparison uses constant-time comparison to prevent timing attacks.
 - **Server-Side Rate Limiting**: The Bridge limits connections to 10/second and caps concurrent unauthenticated connections at 5, applied before the WebSocket upgrade.
 - **JSON-RPC Size Limits**: Messages are capped at 4MB with a max JSON depth of 32 levels and 1024-element arrays.
-- **URL Scheme Guard**: Only `http(s)` and `about:blank` navigation is allowed. A global `onBeforeNavigate` sentinel blocks `file:`, `javascript:`, `data:`, and other dangerous schemes.
+- **URL Scheme Guard**: Only `http(s)` and `about:blank` navigation is allowed. A navigation sentinel (`onBeforeNavigate`) blocks `file:`, `javascript:`, `data:`, and other dangerous schemes. Scoped to agent-controlled tabs only — user's own browsing is unaffected.
 - **Input Validation**: Selectors, text, URLs, tab IDs, and key combinations are validated for type, length, and range.
-- **Sensitive Data Redaction**: Password fields, hidden inputs, and credit card fields have their values redacted (`[REDACTED]`) in both the Interaction Tree and `getAttribute` responses.
+- **Sensitive Data Redaction**: Password fields, hidden inputs, and credit card fields have their values redacted (`[REDACTED]`) in both the Interaction Tree and `getAttribute` responses. Also matches sensitive keywords (cvv, ssn, otp, pin, etc.) in field name/id/placeholder attributes.
 - **Script Execution Gate**: `script.execute` is **disabled by default**. Set `BRP_ALLOW_SCRIPT_EXECUTE=1` to enable. Uses `new Function()` (not `eval()`) with a 1MB code limit and 1MB result cap.
 - **Restricted Pages**: Content scripts cannot be injected into `about:*`, `chrome:*`, `moz-extension:*`, and similar restricted pages.
 - **Constant-Time Comparison**: Token comparison uses `subtle::ConstantTimeEq` to prevent timing attacks.
@@ -205,6 +223,8 @@ Multiple browsers (Firefox, Zen) can connect to the same Bridge simultaneously. 
 Use `browser.list` to see all connected browsers.
 
 ## Development
+
+Requires **Rust ≥ 1.85** (due to `uuid` → `getrandom` 0.4.x). See `rust-version` in `bridge/Cargo.toml`.
 
 ```bash
 # Run bridge with debug logging

@@ -8,66 +8,51 @@
 
   const itree = window.__BRP_ITREE__;
 
-  // Listen for messages from background
-  browser.runtime.onMessage.addListener(async (msg, sender, sendResponse) => {
+  // Listen for messages from background.
+  // IMPORTANT: async listener returns a Promise — Firefox uses the resolved value
+  // as the response. Do NOT mix with sendResponse() or return true (MDN warns against this).
+  browser.runtime.onMessage.addListener(async (msg) => {
     try {
-      let result;
-
       switch (msg.action) {
         case "getITree":
-          result = itree.buildInteractionTree();
-          break;
+          return itree.buildInteractionTree();
 
         case "click":
-          result = doClick(msg);
-          break;
+          return doClick(msg);
 
         case "type":
-          result = doType(msg);
-          break;
+          return doType(msg);
 
         case "fill":
-          result = doFill(msg);
-          break;
+          return doFill(msg);
 
         case "scroll":
-          result = doScroll(msg);
-          break;
+          return doScroll(msg);
 
         case "hover":
-          result = doHover(msg);
-          break;
+          return doHover(msg);
 
         case "select":
-          result = doSelect(msg);
-          break;
+          return doSelect(msg);
 
         case "getAttribute":
-          result = doGetAttribute(msg);
-          break;
+          return doGetAttribute(msg);
 
         case "keyboardPress":
-          result = doKeyboardPress(msg);
-          break;
+          return doKeyboardPress(msg);
 
         case "waitForSelector":
-          result = await doWaitForSelector(msg);
-          break;
+          return await doWaitForSelector(msg);
 
         case "executeScript":
-          result = doExecuteScript(msg);
-          break;
+          return doExecuteScript(msg);
 
         default:
-          result = { error: "Unknown action: " + msg.action };
+          return { error: "Unknown action: " + msg.action };
       }
-
-      sendResponse(result);
     } catch (err) {
-      sendResponse({ error: err.message });
+      return { error: err.message };
     }
-
-    return true; // Keep message channel open for async
   });
 
   // --- Action Implementations ---
