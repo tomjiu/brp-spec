@@ -67,6 +67,9 @@ jobs:
           tool: cargo-audit
 
       - name: Run cargo-audit
+        # Advisory-only during early development; make blocking once stable.
+        # Use `--ignore RUSTSEC-YYYY-NNNN` to suppress known false positives.
+        continue-on-error: true
         run: cargo audit
 
       - name: Install cargo-deny

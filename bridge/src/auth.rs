@@ -79,6 +79,11 @@ pub fn validate_json_depth(value: &Value, max_depth: usize) -> bool {
 // ─── Constant-Time Token Comparison ───
 
 /// Compare two strings in constant time to prevent timing attacks.
+///
+/// **Note:** Early return on length mismatch leaks the token length.
+/// This is acceptable because BRP tokens are fixed-length UUID v4 strings
+/// (36 characters). An attacker learning the token length provides no
+/// practical advantage.
 pub fn secure_compare(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
         return false;
@@ -144,6 +149,17 @@ mod tests {
         // Different lengths — early return (not constant-time, but safe)
         assert!(!secure_compare("short", "a-longer-string"));
         assert!(!secure_compare("", "x"));
+    }
+
+    #[test]
+    fn test_secure_compare_different_lengths_no_panic() {
+        // Different lengths should return false without panicking.
+        // This exercises the early-return path (leaks length, acceptable for
+        // fixed-length UUID tokens — see doc comment on secure_compare).
+        assert!(!secure_compare("short", "much_longer_string_here"));
+        assert!(!secure_compare("a-very-long-string-value", "x"));
+        assert!(!secure_compare("", "not-empty"));
+        assert!(!secure_compare("not-empty", ""));
     }
 
     #[test]

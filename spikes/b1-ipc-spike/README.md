@@ -80,3 +80,25 @@ Native Messaging stdout format:
 - No authentication or encryption
 - No concurrent client handling on Windows (sequential accept loop)
 - Timestamps use epoch-seconds (not full ISO-8601) for simplicity
+
+## Known gaps (production TODO)
+
+These issues are **out of scope for this spike** but must be addressed in the
+v0.4.0 production implementation:
+
+1. **Windows Named Pipe ACL:** `ServerOptions::create()` creates pipes that are
+   accessible to all users on the machine. Production code must construct a
+   `SECURITY_ATTRIBUTES` with a DACL restricting access to the current user's
+   SID (via `windows-sys` or `winapi` crate).
+
+2. **Windows PID liveness:** The spike skips PID liveness checks on Windows
+   (`is_pid_alive` always returns `true`). Production code must use
+   `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, ...)` + `GetExitCodeProcess`
+   to verify the bridge process is still running.
+
+3. **Stale socket cleanup testing:** Only the happy path (bridge running →
+   bootstrap connects) has been manually verified. The stale cleanup path
+   (bridge crashes → lockfile remains → bootstrap detects dead PID → removes
+   lockfile and socket) needs an automated test before production use. This
+   is especially important on Windows where the PID check is not yet
+   implemented.

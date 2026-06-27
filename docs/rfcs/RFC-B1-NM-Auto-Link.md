@@ -628,6 +628,53 @@ On Unix systems, the IPC socket file SHALL be created with permissions `0o600`
 defense-in-depth against casual cross-user access even though it is not the
 primary security boundary.
 
+## 3.5 Windows Named Pipe ACL (TODO for v0.4.0)
+
+On Windows, `tokio::net::windows::named_pipe::ServerOptions` creates Named
+Pipes that are **accessible to all users on the machine** by default. This is
+wider than the Unix `0o600` socket permissions and violates the same-user
+trust domain assumption declared in §3.1.
+
+**Production implementation MUST:**
+
+1. Create a `SECURITY_ATTRIBUTES` structure with a DACL that grants
+   `GENERIC_READ | GENERIC_WRITE` only to the current user's SID.
+2. Pass this via `ServerOptions::create_with_security_attributes()` (requires
+   `windows-sys` or `winapi` crate for constructing the security descriptor).
+
+**Spike status:** The B1 IPC spike (`spikes/b1-ipc-spike/`) does **not** set
+pipe ACLs. This is acceptable for the spike (validation of tokio's Named Pipe
+API), but the production implementation in v0.4.0 **must** address this before
+shipping. If constructing a per-user DACL proves impractical with tokio's
+current API, fallback options include:
+
+- Using a shared secret in the pipe name (e.g., `brp-bridge-<instance_id>-<random_suffix>`)
+  so the pipe name itself is unguessable, though this is security through obscurity.
+- Falling back to localhost TCP loopback with a per-session binding token,
+  though this re-introduces a network attack surface.
+
+The preferred path is explicit DACL construction. This will be validated
+during the v0.3.2 spike cross-platform phase.
+
+---
+
+# 4. Future Chapters (Planned for v0.3.2)
+
+The following chapters are **not yet written**. They will be completed in
+v0.3.2 after the B1 spike validates cross-platform IPC behavior.
+
+| Chapter | Title                          | Status      | Depends On                                    |
+|---------|--------------------------------|-------------|-----------------------------------------------|
+| §4      | Installation & Distribution    | Planned     | Spike validates manifest path detection       |
+| §5      | Token Bootstrap Protocol       | Planned     | Spike validates IPC message format            |
+| §6      | Extension-Side Implementation  | Planned     | §5 defines the protocol                       |
+| §7      | Crash Recovery & Reconnection  | Planned     | Spike validates stale lockfile cleanup        |
+| §8      | Multi-Browser Support          | Planned     | §4 covers per-browser manifest paths          |
+
+**Dependency chain:** Spike cross-platform validation (§2.8, §3.5, §7) must
+complete before RFC chapters are finalized. This prevents committing to
+designs that the spike later proves infeasible.
+
 ---
 
 # References

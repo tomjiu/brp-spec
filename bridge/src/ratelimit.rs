@@ -3,6 +3,12 @@
 /// Server-side connection throttling applied before the WebSocket upgrade.
 /// Tracks recent connection attempts in a 1-second sliding window and limits
 /// concurrent unauthenticated (pending registration) connections.
+///
+/// **Design note — self-DoS risk:** Limiting unauthenticated connections to 5
+/// prevents connection exhaustion, but 5 pending connections × registration
+/// timeout (default 10s) could briefly saturate the slot, blocking legitimate
+/// new connections. This is acceptable for MVP. Future mitigation: dynamic
+/// timeout reduction under load, or per-IP rate limiting.
 
 use std::time::Instant;
 

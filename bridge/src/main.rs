@@ -10,6 +10,9 @@
 /// 4. Receives notifications from Extension and forwards to AI Client via stdout
 /// 5. Assigns sequence numbers to all outbound notifications (RFC0001 §13)
 ///
+/// TODO(v0.3.2): Further modularization — extract:
+///   - `validation.rs`: URL scheme validation, selector length checks, tabId range checks
+///   - `config.rs`: environment variable reading and defaults (timeouts, ports, feature gates)
 /// Security (v0.3.0):
 /// - WebSocket Origin validation (rejects non-extension origins)
 /// - Server-side connection rate limiting (pre-upgrade)
