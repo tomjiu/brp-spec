@@ -13,7 +13,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use crate::auth::{secure_compare, validate_json_depth, OriginValidator, MAX_JSON_DEPTH, MAX_MESSAGE_SIZE};
 use crate::protocol::*;
 use crate::ratelimit::RateLimiter;
-use crate::{BridgeState};
+use crate::router::BridgeState;
 
 /// Sender half of the extension WebSocket connection (shared across tasks).
 pub type ExtSender = Arc<
