@@ -1,0 +1,9 @@
+{
+  "name": "org.brp.bridge",
+  "description": "BRP Native Messaging Bridge — connects AI clients to Firefox/Zen via JSON-RPC 2.0",
+  "path": "PLACEHOLDER_ABSOLUTE_PATH_TO_BRP_BRIDGE_EXECUTABLE",
+  "type": "stdio",
+  "allowed_extensions": [
+    "brp-bridge@brp-spec.org"
+  ]
+}
