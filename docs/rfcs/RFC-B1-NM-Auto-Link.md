@@ -4,7 +4,7 @@
 - **Title:** Native Messaging Auto-Link
 - **Status:** Draft
 - **Author:** tomjiu
-- **Version:** 0.3.1-patch
+- **Version:** 0.3.2
 - **Created:** 2026-06-27
 - **Requires:** RFC0001
 
@@ -1288,20 +1288,770 @@ attack surface:
 
 ---
 
-# Remaining Chapters (Planned for v0.3.2)
+# 6. Extension-Side Implementation
 
-The following chapters are **not yet written**. They will be completed in
-v0.3.2 after the B1 spike validates cross-platform IPC behavior.
+This section specifies how the Firefox extension invokes the bootstrap flow,
+manages the token across sessions, adapts its UI to the Bridge's capabilities,
+and handles errors surfaced by the NM channel or the WebSocket layer.
 
-| Chapter | Title                          | Status      | Depends On                                    |
-|---------|--------------------------------|-------------|-----------------------------------------------|
-| §6      | Extension-Side Implementation  | Planned     | §5 defines the protocol                       |
-| §7      | Crash Recovery & Reconnection  | Planned     | Spike validates stale lockfile cleanup        |
-| §8      | Multi-Browser Support          | Planned     | §4 covers per-browser manifest paths          |
+## 6.1 `connectNative` Invocation Timing
 
-**Dependency chain:** Spike cross-platform validation (§2.8, §3.5, §7) must
-complete before RFC chapters are finalized. This prevents committing to
-designs that the spike later proves infeasible.
+The extension SHALL invoke `browser.runtime.connectNative("org.brp.bridge")`
+only under the following conditions:
+
+| Trigger                                  | Condition                                                     |
+|------------------------------------------|---------------------------------------------------------------|
+| **First run (extension install)**        | No cached token exists in `browser.storage.local`             |
+| **Extension startup**                    | No cached token exists in `browser.storage.local`             |
+| **User clicks "Auto-Link" button**       | User explicitly requests re-link from the Options page        |
+
+The extension SHALL NOT invoke `connectNative` on every page load, tab open, or
+navigation event. The bootstrap process spawns a child OS process; invoking it
+unnecessarily wastes resources and risks hitting the rate limits defined in
+Section 5.6.
+
+### Invocation flow
+
+```
+Extension startup
+    │
+    ├── Read browser.storage.local
+    │   ├── cached token exists?
+    │   │   ├── YES → attempt WS connect with cached token (§6.2)
+    │   │   └── NO  → call connectNative("org.brp.bridge")
+    │   │             ├── success → cache token → WS connect
+    │   │             └── error   → show error UI (§6.4)
+    │   └──
+    └──
+```
+
+### Debounce
+
+If the extension is rapidly reloaded (e.g., during development with
+`about:debugging`), the extension SHALL debounce `connectNative` invocations
+to at most one call per 10-second window. This prevents spawning a burst of
+bootstrap processes that would trigger the Bridge's rate limiter.
+
+---
+
+## 6.2 Token Caching in Extension Storage
+
+The extension SHALL persist the session token in `browser.storage.local` to
+avoid re-running the bootstrap flow on every extension startup.
+
+### Storage schema
+
+```json
+{
+  "brp_cached_token": "e2b7f4a1-9c3d-4e5f-8a6b-1d2c3e4f5a6b",
+  "brp_ws_port": 9817,
+  "brp_instance_id": "a3f7c91e-4b2d-4e8a-9c6f-1d2e3f4a5b6c",
+  "brp_browser_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "brp_cached_at": "2026-06-27T10:35:00Z"
+}
+```
+
+| Key                  | Type   | Description                                         |
+|----------------------|--------|-----------------------------------------------------|
+| `brp_cached_token`   | string | The session token (opaque to the extension)         |
+| `brp_ws_port`        | number | WebSocket port from the bootstrap response          |
+| `brp_instance_id`    | string | Bridge instance UUID from the bootstrap response    |
+| `brp_browser_id`     | string | This browser's persistent identifier (§7.1)         |
+| `brp_cached_at`      | string | ISO 8601 timestamp of when the token was cached     |
+
+### Token opacity
+
+The token is **opaque** to the extension. The extension SHALL NOT parse,
+validate, or inspect the token value. It SHALL treat it as an arbitrary string
+to be passed verbatim to the WebSocket handshake. This decouples the extension
+from any future changes to token format.
+
+### Startup reconnection flow
+
+```
+Extension startup
+    │
+    ├── 1. Read brp_cached_token, brp_ws_port, brp_browser_id from storage
+    │
+    ├── 2. If any required key is missing → run bootstrap (§6.1)
+    │
+    ├── 3. Open WS to ws://127.0.0.1:<brp_ws_port>?token=<brp_cached_token>
+    │       ├── WS open succeeds → session active, skip to step 6
+    │       ├── WS connection refused (ECONNREFUSED) → Bridge likely restarted
+    │       │   → invalidate cached token → exponential backoff (§7.5)
+    │       │   → re-run bootstrap after backoff
+    │       └── WS close 4401 (Unauthorized) → token invalid
+    │           → invalidate cached token → re-run bootstrap immediately
+    │
+    └── 6. Begin heartbeat timer (§7.3)
+```
+
+### Cache invalidation
+
+The extension SHALL delete the cached token from `browser.storage.local` under
+the following conditions:
+
+1. WebSocket connection is refused (`ECONNREFUSED`), indicating the Bridge has
+   restarted and the old port is no longer valid.
+2. WebSocket close frame with status `4401`, indicating the token is no longer
+   accepted (Bridge restarted or token rotated).
+3. User clicks "Re-link" in the Options page.
+4. Bootstrap returns a new token (the new token overwrites the old one).
+
+---
+
+## 6.3 `supportsAutoLink` Capability
+
+The Bridge advertises its auto-link capability in the `initialize` JSON-RPC
+response sent to the MCP Host. This capability determines which UI the
+extension Options page SHALL present.
+
+### Capability field
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "capabilities": {
+      "supportsAutoLink": true,
+      "features": ["interactionTree", "events"]
+    }
+  }
+}
+```
+
+| Value    | Meaning                                                                   |
+|----------|---------------------------------------------------------------------------|
+| `true`   | Bridge is running in managed mode with NM auto-link available             |
+| `false`  | Bridge is running in Standalone mode (`BRP_STANDALONE=1`); NM is disabled |
+
+### How the extension learns the capability
+
+The extension does NOT call `initialize` directly — that is an MCP Host concern.
+Instead, the extension discovers the capability through one of:
+
+1. **Successful bootstrap + WS connect.** If the bootstrap returned a token and
+   the WS handshake succeeded, auto-link is implicitly supported.
+2. **Bootstrap error `BRP_BRIDGE_NOT_RUNNING` + no Standalone indicator.** The
+   Bridge is simply not started yet; auto-link may be available once started.
+3. **Bridge `initialize` response propagated via WS.** After the WS connection
+   is established, the Bridge SHALL send a `serverInfo` message that includes
+   `supportsAutoLink`. The extension SHALL use this for the Options page UI.
+
+### `serverInfo` message (post-WS-connect)
+
+```json
+{
+  "type": "serverInfo",
+  "data": {
+    "version": "0.3.2",
+    "supportsAutoLink": true,
+    "instanceId": "a3f7c91e-4b2d-4e8a-9c6f-1d2e3f4a5b6c"
+  }
+}
+```
+
+The extension SHALL cache this value in memory (not storage) and use it to
+render the Options page.
+
+---
+
+## 6.4 Options Page Behavior
+
+The extension Options page SHALL adapt its UI based on the `supportsAutoLink`
+capability and the current connection state.
+
+### State machine
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Options Page                              │
+│                                                                  │
+│  supportsAutoLink == true                                        │
+│  ├── connected      → "Connected" indicator + "Re-link" button   │
+│  ├── disconnected   → "Disconnected" indicator + "Auto-Link" btn │
+│  ├── connecting     → spinner + "Linking..."                     │
+│  └── error          → error message + "Retry" button             │
+│                                                                  │
+│  supportsAutoLink == false                                       │
+│  └── standalone     → manual token input field + "Save" button   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Auto-link available (`supportsAutoLink: true`)
+
+| Connection state | UI elements                                                        |
+|------------------|--------------------------------------------------------------------|
+| Connected        | Green status indicator, text "Connected to Bridge", "Re-link" button |
+| Disconnected     | Grey status indicator, text "Not connected", "Auto-Link" button    |
+| Connecting       | Spinner, text "Linking..." (all buttons disabled)                  |
+| Error            | Red status indicator, error-specific message (see below), "Retry" button |
+
+### Auto-link unavailable (`supportsAutoLink: false`)
+
+The Options page SHALL render:
+
+1. A text input field labeled "Session Token" for the user to paste the token
+   obtained from the Bridge's log output or the MCP Host's UI.
+2. A "Save" button that stores the token in `browser.storage.local` and
+   attempts a WebSocket connection.
+3. An informational note: "Your Bridge is running in Standalone mode. Copy the
+   token from your AI client's output and paste it here."
+
+### Error-specific messages
+
+| Error code                    | User-facing message                                         |
+|-------------------------------|-------------------------------------------------------------|
+| `BRP_BRIDGE_NOT_RUNNING`      | "Start your AI client first, then click Auto-Link."         |
+| `BRP_TOKEN_INVALID`           | "Session token expired. Click Re-link to get a new one."    |
+| `BRP_IPC_TIMEOUT`             | "Bridge is not responding. Try again in a few seconds."     |
+| `BRP_BRIDGE_BUSY`             | "Too many connection attempts. Please wait a moment."       |
+| `BRP_BOOTSTRAP_INTERNAL_ERROR`| "An unexpected error occurred. Check the Bridge logs."      |
+
+---
+
+## 6.5 Error Handling
+
+### Bootstrap error flow
+
+When the NM channel delivers a bootstrap error message (Section 5.3), the
+extension SHALL:
+
+1. Parse the `error.code` field.
+2. Map it to a user-facing message (Section 6.4, error table).
+3. If the error is **retryable** (see Section 5.3, retryable column), enter the
+   exponential backoff reconnection flow (§7.5).
+4. If the error is **non-retryable**, display the diagnostic message and disable
+   auto-retry. The user MUST manually trigger a retry from the Options page.
+
+### WebSocket connection refused
+
+When the WebSocket connection is refused (the Bridge has restarted and the
+cached port is stale), the extension SHALL:
+
+1. Invalidate the cached token (delete from `browser.storage.local`).
+2. Enter the exponential backoff flow (§7.5).
+3. After backoff, re-run the bootstrap flow to obtain a fresh token and port.
+
+### WebSocket close 4401 (Unauthorized)
+
+When the Bridge closes the WebSocket with status `4401`:
+
+1. Invalidate the cached token immediately.
+2. Re-run the bootstrap flow **without** backoff (the Bridge is running; only
+   the token is stale).
+3. If the re-bootstrap also fails, fall back to the exponential backoff flow.
+
+### NM port disconnect
+
+If the NM port disconnects unexpectedly (Firefox terminates the bootstrap
+process before it writes a response), the extension SHALL treat this as a
+`BRP_BOOTSTRAP_INTERNAL_ERROR` and display the corresponding error message.
+
+---
+
+# 7. Crash Recovery & Reconnection
+
+This section defines how the system recovers from process crashes, extension
+reloads, and other failure modes. The design principle is: **the Bridge is the
+long-lived authority; the extension is a reconnectable client.**
+
+## 7.1 `browserId` Persistence
+
+Each browser profile is assigned a stable identifier (`browserId`) that
+persists across extension restarts, browser restarts, and Bridge restarts.
+
+### Generation
+
+The extension SHALL generate a UUID v4 `browserId` on first run (extension
+install). The `browserId` is generated once and never regenerated unless the
+user explicitly clears extension data.
+
+```javascript
+// Extension background script (first run)
+const { brp_browser_id } = await browser.storage.local.get("brp_browser_id");
+if (!brp_browser_id) {
+  const browserId = crypto.randomUUID(); // UUID v4
+  await browser.storage.local.set({ brp_browser_id: browserId });
+}
+```
+
+### Storage location
+
+The `browserId` is stored in `browser.storage.local` under the key
+`brp_browser_id`. It is scoped to the browser profile:
+
+- Same profile, different sessions → same `browserId`
+- Different profile (e.g., Firefox profile A vs. profile B) → different
+  `browserId`
+- Profile reset or extension reinstall → new `browserId` generated
+
+### Usage
+
+The `browserId` SHALL be included in:
+
+1. The bootstrap's `request_token` IPC message (Section 5.2, `data.browser_id`).
+2. The WebSocket `register` message sent after WS connect.
+3. Heartbeat messages (Section 7.3).
+
+This allows the Bridge to:
+
+- Track which browser instances have active sessions.
+- Enforce per-browser rate limits (Section 5.6).
+- Audit token requests by browser identity.
+- Recognize session recovery vs. new registration (Section 7.2).
+
+---
+
+## 7.2 Session Recovery Flow
+
+### Extension reload
+
+When the extension is reloaded (e.g., toggle off/on in `about:addons`, or
+auto-update), it SHALL:
+
+1. Read `brp_cached_token`, `brp_ws_port`, and `brp_browser_id` from storage.
+2. Attempt WebSocket connection to `ws://127.0.0.1:<brp_ws_port>` with the
+   cached token and the same `browserId`.
+3. If the WS connects successfully, the Bridge SHALL recognize the `browserId`
+   as a **session recovery** — not a new registration. The Bridge SHALL:
+   - Restore any per-browser state (e.g., subscribed event channels).
+   - Update the `last_seen` timestamp for that `browserId`.
+   - Resume normal operation without requiring re-authentication beyond the
+     token check.
+
+```
+Extension reload sequence:
+
+Extension (reloaded)               Bridge (still running)
+    │                                  │
+    │ 1. Read cached token + browserId │
+    │ 2. WS connect (token + browserId)│
+    │──────────────────────────────────>
+    │                                  │ 3. Validate token
+    │                                  │ 4. Recognize browserId (session recovery)
+    │                                  │ 5. Restore per-browser state
+    │ 6. WS open confirmed             │
+    │<──────────────────────────────────
+    │ 7. Begin heartbeat               │
+```
+
+### Bridge restart
+
+When the Bridge crashes and is restarted by the MCP Host:
+
+1. The extension's WebSocket connection is severed (TCP RST or close frame).
+2. The extension detects the disconnect and enters the exponential backoff flow
+   (§7.5).
+3. After backoff, the extension re-runs the bootstrap flow to obtain a new
+   token (the Bridge generates a new token on restart).
+4. The extension connects with the new token and the **same** `browserId`.
+5. The Bridge treats this as a **new session** (it has no memory of the previous
+   instance). However, the `browserId` allows the MCP Host to correlate the
+   session across Bridge restarts for auditing purposes.
+
+```
+Bridge restart sequence:
+
+Extension                          Bridge (crashed → restarted)
+    │                                  │
+    │  WS connection severed           │
+    │<─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─│
+    │                                  │ (MCP Host restarts Bridge)
+    │                                  │ New token, new instance_id
+    │  Exponential backoff             │
+    │  ··· wait 1s ···                 │
+    │                                  │
+    │  Re-run bootstrap (connectNative)│
+    │──────────────────────────────────>
+    │  Get new token + ws_port         │
+    │<──────────────────────────────────
+    │                                  │
+    │  WS connect (new token + same browserId)
+    │──────────────────────────────────>
+    │                                  │ Validate token (new)
+    │                                  │ Register browserId (new session)
+    │  WS open confirmed               │
+    │<──────────────────────────────────
+```
+
+---
+
+## 7.3 Heartbeat Mechanism
+
+To detect stale connections and release resources for disconnected browsers,
+the extension and Bridge SHALL participate in a heartbeat protocol.
+
+### Extension side
+
+The extension SHALL send a periodic `ping` message over the WebSocket at
+**30-second intervals**:
+
+```json
+{
+  "type": "ping",
+  "data": {
+    "browserId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+    "timestamp": "2026-06-27T10:35:30Z"
+  }
+}
+```
+
+The timer SHALL be reset on every outgoing or incoming WebSocket message.
+If the WS connection is idle for 30 seconds, the ping is sent. If the WS
+is actively exchanging messages, the ping MAY be suppressed (the activity
+itself proves liveness).
+
+### Bridge side
+
+The Bridge SHALL maintain a `last_seen` timestamp per registered `browserId`.
+This timestamp is updated on:
+
+- Any incoming WebSocket message from the browser.
+- Receipt of a `ping` message.
+
+If the Bridge has not received any message from a `browserId` within **90
+seconds**, it SHALL:
+
+1. Remove the browser's registration record.
+2. Release any resources associated with that browser (event subscriptions,
+   pending request queues, rate-limit counters).
+3. Close the WebSocket connection with status code `4408` (Heartbeat Timeout).
+
+```json
+{
+  "type": "close",
+  "code": 4408,
+  "reason": "Heartbeat timeout: no messages received for 90 seconds"
+}
+```
+
+### Tunable constants
+
+| Parameter                | Value  | Rationale                                                |
+|--------------------------|--------|----------------------------------------------------------|
+| Ping interval            | 30s    | Frequent enough to detect disconnects within a minute    |
+| Heartbeat timeout        | 90s    | 3× ping interval; tolerates 2 missed pings + jitter      |
+| Max clock skew tolerance | ±5s    | For timestamp comparison; not security-critical          |
+
+### Extension disconnect detection
+
+If the extension's WebSocket `onclose` handler fires (for any reason), the
+extension SHALL:
+
+1. Stop the heartbeat timer.
+2. Enter the reconnection flow (§7.2 or §7.5 depending on the close reason).
+
+---
+
+## 7.4 Pending Request Handling
+
+When the extension disconnects (gracefully or otherwise), the Bridge MUST
+fail all pending requests associated with that `browserId`.
+
+### On extension disconnect
+
+The Bridge SHALL iterate over all pending requests for the disconnecting
+browser and fail each one with the error code `BRP_EXTENSION_DISCONNECTED`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 42,
+  "error": {
+    "code": -32001,
+    "message": "Extension disconnected",
+    "data": {
+      "code": "BRP_EXTENSION_DISCONNECTED",
+      "browserId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "pendingCount": 3
+    }
+  }
+}
+```
+
+This is reported to the MCP Host via the JSON-RPC error response so that the
+AI client can inform the user that their browser extension is no longer
+connected.
+
+### On extension reconnect
+
+After reconnection, the pending request queue for the `browserId` SHALL be
+empty — all previous requests were already failed in the disconnect handler.
+The extension and MCP Host MUST re-issue any requests that were in flight at
+the time of disconnection. The Bridge SHALL NOT buffer requests across
+disconnect/reconnect boundaries.
+
+---
+
+## 7.5 Exponential Backoff
+
+The extension SHALL use the following backoff schedule when reconnecting after
+a WebSocket disconnect or retryable bootstrap error:
+
+```
+attempt 1: wait  1s
+attempt 2: wait  2s
+attempt 3: wait  4s
+attempt 4: wait  8s
+attempt 5+: wait 30s  (capped)
+jitter:     ±500ms    (uniform random)
+```
+
+### Algorithm
+
+```javascript
+function backoffDelay(attempt) {
+  const base = Math.min(Math.pow(2, attempt - 1), 30); // 1, 2, 4, 8, 16→30
+  const jitter = (Math.random() - 0.5) * 1000;         // ±500ms
+  return Math.max(base * 1000 + jitter, 500);           // floor at 500ms
+}
+```
+
+### Backoff reset
+
+The attempt counter SHALL reset to 0 upon:
+
+- A successful WebSocket connection.
+- User manually clicking "Retry" or "Auto-Link" in the Options page.
+
+### Maximum attempts
+
+The extension SHALL NOT exceed 10 consecutive backoff attempts without user
+intervention. After 10 failed attempts, the extension SHALL:
+
+1. Stop automatic reconnection.
+2. Display a persistent error in the Options page: "Unable to connect to
+   Bridge after multiple attempts. Please verify your AI client is running and
+   click Retry."
+3. Provide a "Retry" button that resets the counter and begins a fresh attempt.
+
+---
+
+## 7.6 Crash Scenarios Matrix
+
+| Scenario                     | Extension behavior                                            | Bridge behavior                                              |
+|------------------------------|---------------------------------------------------------------|--------------------------------------------------------------|
+| **Extension reload**         | Re-read cached token + `browserId`; WS reconnect              | Recognize `browserId` as session recovery; restore state     |
+| **Extension crash + restart**| Full startup sequence; use cached token if available           | Recognize `browserId`; treat as session recovery if token valid |
+| **Bridge crash**             | WS disconnects; exponential backoff; re-bootstrap (new token) | MCP Host restarts Bridge; new token, new `instance_id`       |
+| **Both crash**               | Full startup; no valid cache; run bootstrap                   | Full startup; new token, new `instance_id`                   |
+| **Browser close**            | Extension stops; WS connection severed                        | Bridge unaffected (MCP Host owns lifecycle); heartbeat timeout cleans up browser record after 90s |
+| **Browser reopen**           | Extension starts; cached token + `browserId` available         | Bridge still running; accepts reconnection with existing token |
+| **MCP Host crash**           | Extension unaffected if WS stays up; WS severs if Bridge dies | Bridge terminated (child of MCP Host); lockfile cleaned by bootstrap on next scan |
+| **Laptop sleep / wake**      | WS may be severed; detect via heartbeat miss or send failure  | Bridge unaffected (long-running); heartbeat timeout may expire; extension reconnects |
+
+### Recovery ordering
+
+When multiple failures occur simultaneously (e.g., Bridge crash during laptop
+sleep), the extension SHALL process recovery in this order:
+
+1. Detect WS disconnect (via `onclose` or heartbeat failure).
+2. Invalidate cached token.
+3. Enter exponential backoff.
+4. Re-run bootstrap to obtain a fresh token.
+5. Reconnect with same `browserId`.
+
+---
+
+# 8. Multi-Browser Support
+
+BRP targets Firefox and Zen Browser for v0.4.0. This section defines how the
+NM manifest coexists across browser variants and how the `browserId` mechanism
+supports future multi-browser scenarios.
+
+## 8.1 Firefox + Zen Manifest Coexistence
+
+Firefox and Zen Browser are both Gecko-based and share the Native Messaging
+Host discovery mechanism. On most platforms, they read manifests from the same
+or closely related directories.
+
+### Manifest directory sharing
+
+| Platform | Firefox path                                                          | Zen path                                                                   | Shared? |
+|----------|-----------------------------------------------------------------------|----------------------------------------------------------------------------|---------|
+| Linux    | `~/.mozilla/native-messaging-hosts/`                                  | `~/.zen/native-messaging-hosts/` (verify)                                  | Partially — same parent, different subdirectory |
+| macOS    | `~/Library/Application Support/Mozilla/NativeMessagingHosts/`         | `~/Library/Application Support/Zen/NativeMessagingHosts/` (verify)         | No — different parent directories |
+| Windows  | `HKCU\Software\Mozilla\NativeMessagingHosts\`                         | `HKCU\Software\Zen\NativeMessagingHosts\` (verify)                         | No — different registry keys |
+
+### Implications
+
+- On **Linux**, if both browsers read from `~/.mozilla/native-messaging-hosts/`,
+  a single manifest file serves both. If Zen uses `~/.zen/`, the installer
+  SHALL write the manifest to both directories.
+- On **macOS**, the installer SHALL write the manifest to both the Mozilla and
+  Zen directories.
+- On **Windows**, the installer SHALL create registry keys under both the
+  Mozilla and Zen paths.
+
+### Manifest content
+
+The same manifest file content works for both browsers because the
+`allowed_extensions` field lists extension IDs, not browser identifiers:
+
+```json
+{
+  "name": "org.brp.bridge",
+  "description": "BRP Bridge Native Messaging Host",
+  "path": "/usr/local/bin/brp-bridge",
+  "type": "stdio",
+  "allowed_extensions": [
+    "brp-extension@yourdomain.com",
+    "brp-extension@zen-browser.example"
+  ]
+}
+```
+
+The installer SHALL detect both Firefox and Zen (Section 4.3, browser variant
+detection) and install the manifest to all detected locations with the
+appropriate `allowed_extensions` list.
+
+### Profile directory verification
+
+Zen Browser MAY use a different profile directory structure than Firefox. The
+`brp-bridge --install` command SHALL probe for Zen-specific directories and
+log a warning if a known Zen installation is not detected, directing the user
+to manual installation documentation.
+
+---
+
+## 8.2 `browserId` in Auto-Link
+
+The `browserId` (Section 7.1) is included in the bootstrap's `request_token`
+IPC message. This allows the Bridge to track which browser variant requested
+the token.
+
+### Bootstrap request with browser metadata
+
+The bootstrap process SHALL forward the `browser_id` it receives from the
+extension's NM stdin input. The extension SHALL write the `browser_id` to
+the NM port's stdin before the bootstrap process reads it:
+
+```json
+{
+  "type": "request_token",
+  "data": {
+    "browser_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+  }
+}
+```
+
+### Bridge-side tracking
+
+The Bridge SHALL maintain a registry of `browser_id` values that have
+successfully requested tokens:
+
+```json
+{
+  "f47ac10b-58cc-4372-a567-0e02b2c3d479": {
+    "first_seen": "2026-06-27T10:30:00Z",
+    "last_seen": "2026-06-27T14:22:15Z",
+    "token_requests": 3,
+    "active_ws": true
+  },
+  "c9a1e2b3-4d5f-6789-abcd-ef0123456789": {
+    "first_seen": "2026-06-27T11:00:00Z",
+    "last_seen": "2026-06-27T11:00:00Z",
+    "token_requests": 1,
+    "active_ws": false
+  }
+}
+```
+
+This tracking is informational and supports future multi-browser scenarios
+(B2 milestone) where each browser MAY receive a distinct token. For v0.4.0,
+all browsers share the same session token regardless of `browser_id`.
+
+---
+
+## 8.3 Extension ID Differences
+
+Firefox and Zen Browser MAY assign different extension IDs to the same
+extension package, depending on how the extension is distributed (AMO,
+self-hosted XPI, Zen's add-on store).
+
+### Manifest `allowed_extensions`
+
+The NM manifest's `allowed_extensions` field MUST list every extension ID
+that is permitted to invoke `connectNative`. If the extension is installed in
+both Firefox and Zen with different IDs, both IDs MUST appear:
+
+```json
+{
+  "allowed_extensions": [
+    "brp-extension@yourdomain.com",
+    "{a1b2c3d4-e5f6-7890-abcd-ef1234567890}"
+  ]
+}
+```
+
+### Installer behavior
+
+The `brp-bridge --install` command SHALL accept an `--extension-id` flag to
+add additional extension IDs to the manifest:
+
+```bash
+brp-bridge --install --extension-id "brp-extension@yourdomain.com" \
+                     --extension-id "{a1b2c3d4-e5f6-7890-abcd-ef1234567890}"
+```
+
+If no `--extension-id` is provided, the installer SHALL use the default
+extension ID (`brp-extension@yourdomain.com`) and print a warning advising
+the user to add additional IDs if using Zen or other browser variants.
+
+### Wildcard approach
+
+Firefox does not support wildcards in `allowed_extensions`. Each extension ID
+MUST be listed explicitly. The installer SHALL NOT attempt to use wildcard
+patterns.
+
+---
+
+## 8.4 Future Chrome Considerations
+
+Chrome support is **out of scope** for v0.4.0. This section documents known
+differences for future reference (targeted at the B2 milestone).
+
+### Manifest differences
+
+| Aspect                  | Firefox / Zen                                     | Chrome / Chromium                                         |
+|-------------------------|---------------------------------------------------|-----------------------------------------------------------|
+| Auth field              | `allowed_extensions` (extension IDs)              | `allowed_origins` (chrome-extension:// origins)           |
+| Manifest path (Linux)   | `~/.mozilla/native-messaging-hosts/`              | `~/.config/google-chrome/NativeMessagingHosts/`           |
+| Manifest path (macOS)   | `~/Library/Application Support/Mozilla/...`       | `~/Library/Application Support/Google/Chrome/...`         |
+| Manifest path (Windows) | `HKCU\Software\Mozilla\NativeMessagingHosts\`     | `HKCU\Software\Google\Chrome\NativeMessagingHosts\`       |
+| Background model        | Event page / persistent background                | MV3 Service Worker (no persistent background)             |
+
+### MV3 Service Worker implications
+
+Chrome's MV3 Service Worker model imposes significant constraints:
+
+1. **No persistent connections.** Service Workers are terminated after ~30s of
+   inactivity. The WebSocket connection and heartbeat timer cannot survive
+   Service Worker suspension.
+2. **No NM port persistence.** The NM port created by `chrome.runtime.connectNative()`
+   is bound to the Service Worker's lifetime. When the worker is suspended,
+   the port is disconnected.
+3. **Workaround required.** A potential approach is to use `chrome.alarms` to
+   periodically wake the Service Worker and re-establish the connection, but
+   this adds latency and complexity.
+
+### Recommendation
+
+Chrome support SHOULD be deferred until either:
+
+- Chrome relaxes Service Worker lifetime constraints for NM hosts, or
+- BRP implements a reconnection model that tolerates frequent Service Worker
+  suspension (e.g., message queuing in the Bridge for deferred delivery).
+
+This is tracked as a B2 milestone item and SHALL NOT block v0.4.0 delivery.
+
+---
+
+# Remaining Chapters
+
+All chapters (§1–§8) are now complete. No outstanding sections remain.
 
 ---
 
@@ -1320,5 +2070,6 @@ designs that the spike later proves infeasible.
 
 | Version      | Date       | Changes                                                      |
 |--------------|------------|--------------------------------------------------------------|
+| 0.3.2        | 2026-07-03 | Added §6 Extension-Side Implementation, §7 Crash Recovery & Reconnection, §8 Multi-Browser Support; all chapters complete |
 | 0.3.1-patch  | 2026-07-02 | Added §4 Installation & Distribution, §5 Token Bootstrap Protocol; renumbered future chapters to §6-§8 |
 | 0.3.1        | 2026-06-27 | Initial draft: Chapters 1-3, References                      |

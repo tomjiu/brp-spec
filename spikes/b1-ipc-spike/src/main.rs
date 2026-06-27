@@ -131,9 +131,38 @@ mod ipc_windows {
         format!(r"\\.\pipe\brp-bridge-spike-{}", instance_id)
     }
 
-    /// Windows: skip PID liveness check for spike (just attempt connection)
-    pub fn is_pid_alive(_pid: u32) -> bool {
-        true
+    /// Windows: check PID liveness via OpenProcess + GetExitCodeProcess.
+    /// Uses PROCESS_QUERY_LIMITED_INFORMATION (minimum privilege) to open
+    /// the process, then checks whether its exit code is STILL_ACTIVE (259).
+    pub fn is_pid_alive(pid: u32) -> bool {
+        unsafe {
+            let handle = windows_sys::Win32::System::Threading::OpenProcess(
+                windows_sys::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION,
+                0, // don't inherit handle
+                pid,
+            );
+
+            if handle.is_null()
+                || handle == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE
+            {
+                return false;
+            }
+
+            let mut exit_code: u32 = 0;
+            let result = windows_sys::Win32::System::Threading::GetExitCodeProcess(
+                handle,
+                &mut exit_code,
+            );
+
+            windows_sys::Win32::Foundation::CloseHandle(handle);
+
+            if result == 0 {
+                return false; // GetExitCodeProcess failed
+            }
+
+            // STILL_ACTIVE == 259 (not exported by windows-sys 0.59)
+            exit_code == 259
+        }
     }
 }
 
@@ -168,9 +197,73 @@ fn parse_mode_arg() -> String {
         .find(|a| a.starts_with("--mode="))
         .map(|a| a.trim_start_matches("--mode=").to_string())
         .unwrap_or_else(|| {
-            eprintln!("Usage: b1-ipc-spike --mode=<bridge|bootstrap>");
+            eprintln!("Usage: b1-ipc-spike --mode=<bridge|bootstrap|stale-test>");
             std::process::exit(1);
         })
+}
+
+/// Platform-agnostic PID liveness probe.
+fn is_pid_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        ipc_unix::is_pid_alive(pid)
+    }
+    #[cfg(windows)]
+    {
+        ipc_windows::is_pid_alive(pid)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Discovery: scan lockfiles, verify PIDs, clean stale entries
+// ---------------------------------------------------------------------------
+
+/// Scan lockfiles, verify PIDs, clean stale entries.
+/// Returns list of live candidates sorted by MRU (most recent first).
+fn discover_live_instances() -> Vec<protocol::LockfileData> {
+    let dir = lockfile_dir();
+
+    if !dir.exists() {
+        return Vec::new();
+    }
+
+    let mut candidates: Vec<protocol::LockfileData> = Vec::new();
+
+    for entry in std::fs::read_dir(&dir).expect("read lockfile dir") {
+        let entry = entry.expect("dir entry");
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+
+        let contents = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Discovery: skipping {}: {}", path.display(), e);
+                continue;
+            }
+        };
+
+        let data: protocol::LockfileData = match serde_json::from_str(&contents) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Discovery: invalid JSON in {}: {}", path.display(), e);
+                continue;
+            }
+        };
+
+        if !is_pid_alive(data.pid) {
+            eprintln!("Discovery: stale entry pid={}, cleaning up", data.pid);
+            let _ = std::fs::remove_file(&path);
+            continue;
+        }
+
+        candidates.push(data);
+    }
+
+    // Sort MRU first (epoch-seconds string comparison works)
+    candidates.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    candidates
 }
 
 // ---------------------------------------------------------------------------
@@ -288,73 +381,12 @@ async fn run_bridge() {
 // ---------------------------------------------------------------------------
 
 async fn run_bootstrap() {
-    let dir = lockfile_dir();
-
-    if !dir.exists() {
-        panic!(
-            "No lockfile directory found at {}. Is bridge mode running?",
-            dir.display()
-        );
-    }
-
-    let mut candidates: Vec<protocol::LockfileData> = Vec::new();
-
-    // Scan *.json lockfiles
-    for entry in std::fs::read_dir(&dir).expect("read lockfile dir") {
-        let entry = entry.expect("dir entry");
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-
-        let contents = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("Bootstrap mode: skipping {}: {}", path.display(), e);
-                continue;
-            }
-        };
-
-        let data: protocol::LockfileData = match serde_json::from_str(&contents) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("Bootstrap mode: invalid JSON in {}: {}", path.display(), e);
-                continue;
-            }
-        };
-
-        // Platform-specific PID liveness check
-        #[cfg(unix)]
-        {
-            if !ipc_unix::is_pid_alive(data.pid) {
-                eprintln!(
-                    "Bootstrap mode: stale entry pid={}, cleaning up",
-                    data.pid
-                );
-                let _ = std::fs::remove_file(&path);
-                continue;
-            }
-        }
-
-        // On Windows, is_pid_alive always returns true for the spike.
-        #[cfg(windows)]
-        {
-            if !ipc_windows::is_pid_alive(data.pid) {
-                let _ = std::fs::remove_file(&path);
-                continue;
-            }
-        }
-
-        candidates.push(data);
-    }
+    let candidates = discover_live_instances();
 
     if candidates.is_empty() {
         panic!("No live bridge instances found. Start bridge mode first.");
     }
 
-    // Select MRU (most recent started_at — numeric string comparison works
-    // because we use unix-epoch seconds)
-    candidates.sort_by(|a, b| b.started_at.cmp(&a.started_at));
     let target = &candidates[0];
 
     eprintln!(
@@ -418,6 +450,94 @@ async fn run_bootstrap() {
 }
 
 // ---------------------------------------------------------------------------
+// Stale-test mode: automated stale socket/lockfile cleanup test
+// ---------------------------------------------------------------------------
+
+async fn run_stale_test() {
+    eprintln!("=== Stale cleanup test: START ===");
+
+    let dir = lockfile_dir();
+    std::fs::create_dir_all(&dir).expect("create lockfile dir");
+
+    // Pick a PID that is almost certainly not running.
+    // We verify it's actually dead before proceeding.
+    let dead_pid: u32 = 99999;
+    if is_pid_alive(dead_pid) {
+        eprintln!(
+            "Stale test: SKIP — PID {} is actually running on this system, cannot test",
+            dead_pid
+        );
+        std::process::exit(2);
+    }
+
+    // --- Write a fake lockfile with the known-dead PID ---
+    let fake_data = protocol::LockfileData {
+        pid: dead_pid,
+        #[cfg(unix)]
+        ipc_path: "/tmp/brp-bridge-spike-fake.sock".to_string(),
+        #[cfg(windows)]
+        ipc_path: r"\\.\pipe\brp-bridge-spike-fake".to_string(),
+        ws_port: 9817,
+        started_at: now_iso8601(),
+        instance_id: "fake-instance-for-test".to_string(),
+    };
+
+    let fake_path = dir.join(format!("{}.json", dead_pid));
+    std::fs::write(
+        &fake_path,
+        serde_json::to_string_pretty(&fake_data).expect("serialize fake lockfile"),
+    )
+    .expect("write fake lockfile");
+
+    eprintln!(
+        "Stale test: wrote fake lockfile at {} (pid={})",
+        fake_path.display(),
+        dead_pid
+    );
+
+    // --- Run discovery (scan + verify PIDs + clean stale) ---
+    let live = discover_live_instances();
+
+    // --- Verify results ---
+    let mut pass = true;
+
+    // Check 1: stale lockfile should have been removed
+    if fake_path.exists() {
+        eprintln!("FAIL: stale lockfile was NOT cleaned up at {}", fake_path.display());
+        pass = false;
+    } else {
+        eprintln!("PASS: stale lockfile cleaned up");
+    }
+
+    // Check 2: discovery should report no live instances (unless a real bridge
+    // is running, in which case we just verify the fake one was excluded)
+    let fake_still_present = live.iter().any(|c| c.pid == dead_pid);
+    if fake_still_present {
+        eprintln!("FAIL: stale instance still reported as live (pid={})", dead_pid);
+        pass = false;
+    } else {
+        eprintln!("PASS: stale instance excluded from live candidates");
+    }
+
+    if live.is_empty() {
+        eprintln!("PASS: no live instances found (expected when no bridge is running)");
+    } else {
+        eprintln!(
+            "INFO: {} live instance(s) found (real bridges may be running)",
+            live.len()
+        );
+    }
+
+    // --- Summary ---
+    if pass {
+        eprintln!("=== Stale cleanup test: ALL CHECKS PASSED ===");
+    } else {
+        eprintln!("=== Stale cleanup test: FAILED ===");
+        std::process::exit(1);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -428,8 +548,12 @@ async fn main() {
     match mode.as_str() {
         "bridge" => run_bridge().await,
         "bootstrap" => run_bootstrap().await,
+        "stale-test" => run_stale_test().await,
         other => {
-            eprintln!("Unknown mode: '{}'. Expected 'bridge' or 'bootstrap'.", other);
+            eprintln!(
+                "Unknown mode: '{}'. Expected 'bridge', 'bootstrap', or 'stale-test'.",
+                other
+            );
             std::process::exit(1);
         }
     }
