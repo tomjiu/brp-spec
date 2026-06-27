@@ -187,6 +187,24 @@
       // (creates a new scope, doesn't have access to local variables)
       const fn = new Function(msg.code);
       const result = fn();
+
+      // Cap result size (serialize and check length)
+      let resultStr;
+      try {
+        resultStr = JSON.stringify(result);
+      } catch (e) {
+        resultStr = String(result);
+      }
+
+      if (resultStr && resultStr.length > 1048576) {
+        return {
+          success: true,
+          result: "[RESULT TRUNCATED — exceeded 1MB]",
+          truncated: true,
+          originalSize: resultStr.length,
+        };
+      }
+
       return { success: true, result: result };
     } catch (err) {
       return { error: err.message, errorCode: "BRP_SCRIPT_ERROR" };
@@ -268,6 +286,26 @@
     return { success: true, selected: matched };
   }
 
+  // Sensitive field types that should have their values redacted
+  const SENSITIVE_INPUT_TYPES = new Set(["password", "hidden"]);
+
+  /**
+   * Check if an element is a sensitive field whose value should be redacted.
+   */
+  function isSensitiveElement(el) {
+    if (!el) return false;
+    // Password and hidden inputs
+    if (el.tagName === "INPUT" && SENSITIVE_INPUT_TYPES.has((el.type || "").toLowerCase())) {
+      return true;
+    }
+    // Elements with autocomplete indicating sensitive data
+    const autocomplete = el.getAttribute("autocomplete") || "";
+    if (["current-password", "new-password", "cc-number", "cc-csc"].includes(autocomplete)) {
+      return true;
+    }
+    return false;
+  }
+
   function doGetAttribute(msg) {
     const el = itree.findElement(msg.selector, msg.selectors, msg.nodeId);
     if (!el) {
@@ -277,6 +315,13 @@
     const attrName = msg.attribute;
     if (!attrName) {
       return { error: "No attribute name provided" };
+    }
+
+    // ── Sensitive field redaction ──
+    // Redact value-related attributes on password/hidden/sensitive fields
+    const sensitiveAttrs = new Set(["value", "textContent", "innerText", "innerHTML"]);
+    if (sensitiveAttrs.has(attrName) && isSensitiveElement(el)) {
+      return { success: true, value: "[REDACTED]", redacted: true, reason: "sensitive field" };
     }
 
     // Special properties that aren't attributes

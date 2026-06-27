@@ -153,7 +153,7 @@ async def ensure_initialized():
 
     result = await brp_request("initialize", {
         "protocolVersion": "0.1.0",
-        "clientInfo": {"name": "brp-mcp-adapter", "version": "0.2.0"},
+        "clientInfo": {"name": "brp-mcp-adapter", "version": "0.3.0"},
         "capabilities": {
             "features": ["interactionTree", "events", "screenshot"],
             "actions": [

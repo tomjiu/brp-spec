@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>BRP Bridge Options</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 480px;
+      margin: 24px auto;
+      padding: 0 16px;
+      color: #1a1a1a;
+    }
+    h1 { font-size: 18px; margin-bottom: 8px; }
+    p { color: #555; font-size: 14px; line-height: 1.5; }
+    label { display: block; font-weight: 600; margin-bottom: 4px; font-size: 14px; }
+    input[type="text"] {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 13px;
+      box-sizing: border-box;
+    }
+    .btn-row { display: flex; gap: 8px; margin-top: 12px; }
+    button {
+      padding: 8px 16px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #fff;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    button:hover { background: #f0f0f0; }
+    button.primary {
+      background: #0060df;
+      color: #fff;
+      border-color: #0060df;
+    }
+    button.primary:hover { background: #003eaa; }
+    .status {
+      margin-top: 12px;
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-size: 13px;
+      display: none;
+    }
+    .status.success { display: block; background: #d4edda; color: #155724; }
+    .status.error { display: block; background: #f8d7da; color: #721c24; }
+    .hint { font-size: 12px; color: #888; margin-top: 4px; }
+    .section { margin-top: 24px; padding-top: 16px; border-top: 1px solid #eee; }
+  </style>
+</head>
+<body>
+  <h1>BRP Bridge Extension</h1>
+  <p>Configure authentication and security settings for the BRP Bridge connection.</p>
+
+  <div class="section">
+    <label for="token-input">Auth Token (Standalone Mode)</label>
+    <input type="text" id="token-input" placeholder="Leave empty for Native Messaging mode" autocomplete="off" spellcheck="false">
+    <p class="hint">
+      In <strong>Native Messaging</strong> mode, leave this empty — the Bridge uses Origin validation.
+      In <strong>Standalone</strong> mode, paste the token from the Bridge's startup output or set the <code>BRP_AUTH_TOKEN</code> environment variable.
+    </p>
+    <div class="btn-row">
+      <button id="save-btn" class="primary">Save Token</button>
+      <button id="clear-btn">Clear Token</button>
+      <button id="generate-btn">Generate New</button>
+    </div>
+    <div id="status" class="status"></div>
+  </div>
+
+  <div class="section">
+    <label>Last Used</label>
+    <p id="last-used" class="hint">Token has not been used yet.</p>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

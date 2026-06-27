@@ -10,7 +10,6 @@
   "use strict";
 
   const WS_URL = "ws://127.0.0.1:9817";
-  const TOKEN_URL = "http://127.0.0.1:9818/token";
   const RECONNECT_BASE_DELAY = 1000;
   const RECONNECT_MAX_DELAY = 10000;
 
@@ -21,20 +20,18 @@
 
   // ─── Auth Token ───
 
-  async function fetchAuthToken() {
+  /**
+   * Get auth token from browser.storage.local (set via Options page).
+   * Returns null if no token is configured (NM mode relies on Origin validation).
+   */
+  async function getAuthToken() {
     try {
-      const resp = await fetch(TOKEN_URL, { cache: "no-store" });
-      if (resp.ok) {
-        const token = (await resp.text()).trim();
-        if (token) {
-          console.log("[BRP] Auth token fetched");
-          return token;
-        }
-      }
+      const result = await browser.storage.local.get("brpAuthToken");
+      return result.brpAuthToken || null;
     } catch (e) {
-      console.warn("[BRP] Could not fetch auth token:", e.message || e);
+      console.warn("[BRP] Could not read stored token:", e.message || e);
+      return null;
     }
-    return null;
   }
 
   // ─── Safe Content Script Messaging ───
@@ -90,16 +87,12 @@
       reconnectAttempts = 0;
       authenticated = false;
 
-      // Fetch auth token from Bridge's token HTTP server
+      // Get auth token from browser.storage.local (Options page)
       let token = null;
       try {
-        token = await fetchAuthToken();
+        token = await getAuthToken();
       } catch (e) {
-        console.warn("[BRP] Token fetch error:", e);
-      }
-
-      if (!token) {
-        console.error("[BRP] No auth token — bridge will reject connection");
+        console.warn("[BRP] Token lookup error:", e);
       }
 
       // Detect browser and register with bridge
@@ -120,11 +113,11 @@
           browserId: browserName,
           token: token || "",
           userAgent: navigator.userAgent,
-          extensionVersion: "0.2.0"
+          extensionVersion: "0.3.0"
         }
       });
       ws.send(registerMsg);
-      console.log("[BRP] Registering as:", browserName);
+      console.log("[BRP] Registering as:", browserName, token ? "(with token)" : "(no token — Origin-only auth)");
     };
 
     ws.onmessage = (event) => {
@@ -347,8 +340,12 @@
   }
 
   async function handleTabOpen(params) {
+    const url = params?.url || "about:blank";
+    const urlErr = validateUrl(url);
+    if (urlErr) throw new Error(urlErr);
+
     const tab = await browser.tabs.create({
-      url: params?.url || "about:blank",
+      url,
       active: params?.active !== false,
     });
     return { tabId: tab.id, windowId: tab.windowId, url: tab.url };
@@ -377,11 +374,17 @@
   }
 
   async function handlePageNavigate(params) {
-    const tabId = params?.tabId || (await getActiveTabId());
-    await browser.tabs.update(tabId, { url: params?.uri || params?.url });
+    const url = params?.uri || params?.url;
+    const urlErr = validateUrl(url);
+    if (urlErr) throw new Error(urlErr);
 
+    const tabId = params?.tabId || (await getActiveTabId());
+    const tabErr = validateTabId(tabId);
+    if (tabErr) throw new Error(tabErr);
+
+    await browser.tabs.update(tabId, { url });
     await waitForNavigation(tabId, 15000);
-    return { uri: params?.uri || params?.url };
+    return { uri: url };
   }
 
   async function handleGetITree(params) {
@@ -391,6 +394,23 @@
 
   async function handleElementAction(actionType, params) {
     const tabId = params?.tabId || (await getActiveTabId());
+    const tabErr = validateTabId(tabId);
+    if (tabErr) throw new Error(tabErr);
+
+    // Validate selector
+    const selErr = validateSelector(params?.selector || params?.selectors);
+    if (selErr) throw new Error(selErr);
+
+    // Validate text input length
+    if (params?.text && typeof params.text === "string" && params.text.length > 65536) {
+      throw new Error("Text input too long (max 65536 chars)");
+    }
+
+    // Validate values array (for element.select)
+    if (params?.values && Array.isArray(params.values) && params.values.length > 100) {
+      throw new Error("Values array too large (max 100 items)");
+    }
+
     return await sendToContentScript(tabId, {
       action: actionType,
       selector: params?.selector || params?.selectors,
@@ -407,6 +427,14 @@
 
   async function handleKeyboardPress(params) {
     const tabId = params?.tabId || (await getActiveTabId());
+    const tabErr = validateTabId(tabId);
+    if (tabErr) throw new Error(tabErr);
+
+    // Validate key combination length (e.g. "Control+Shift+a" = 17 chars)
+    if (params?.key && typeof params.key === "string" && params.key.length > 64) {
+      throw new Error("Key combination too long (max 64 chars)");
+    }
+
     return await sendToContentScript(tabId, {
       action: "keyboardPress",
       key: params?.key,
@@ -449,9 +477,20 @@
 
   async function handleScriptExecute(params) {
     const tabId = params?.tabId || (await getActiveTabId());
+    const tabErr = validateTabId(tabId);
+    if (tabErr) throw new Error(tabErr);
+
+    // Validate code size (content.js also has a 1MB limit)
+    if (!params?.code || typeof params.code !== "string") {
+      throw new Error("code parameter is required and must be a string");
+    }
+    if (params.code.length > 1048576) {
+      throw new Error("Script code too large (max 1MB)");
+    }
+
     return await sendToContentScript(tabId, {
       action: "executeScript",
-      code: params?.code,
+      code: params.code,
     });
   }
 
@@ -478,6 +517,90 @@
       }, timeoutMs);
     });
   }
+
+  // ─── Input Validation ───
+
+  /**
+   * Validate URL scheme for navigation. Only http(s) and about:blank are allowed.
+   * Returns null if valid, or an error message if invalid.
+   */
+  function validateUrl(url) {
+    if (!url || typeof url !== "string") return "URL is required";
+    if (url.length > 8192) return "URL too long (max 8192 chars)";
+    try {
+      const parsed = new URL(url);
+      const scheme = parsed.protocol.toLowerCase();
+      if (scheme !== "http:" && scheme !== "https:" && url !== "about:blank") {
+        return `Blocked URL scheme: ${scheme} (only http(s) and about:blank allowed)`;
+      }
+      return null;
+    } catch (e) {
+      return `Invalid URL: ${e.message}`;
+    }
+  }
+
+  /**
+   * Validate a selector object. Returns null if valid, error message otherwise.
+   */
+  function validateSelector(selector) {
+    if (!selector) return null; // optional in some contexts
+    if (typeof selector === "object" && selector.value) {
+      if (typeof selector.value !== "string") return "Selector value must be a string";
+      if (selector.value.length > 4096) return "Selector too long (max 4096 chars)";
+    }
+    return null;
+  }
+
+  /**
+   * Validate tabId parameter. Returns null if valid, error message otherwise.
+   */
+  function validateTabId(tabId) {
+    if (tabId === undefined || tabId === null) return null; // optional
+    if (typeof tabId !== "number" || !Number.isInteger(tabId) || tabId < 0) {
+      return "tabId must be a non-negative integer";
+    }
+    return null;
+  }
+
+  // ─── Global Navigation Sentinel ───
+
+  /**
+   * Hard-block any navigation to non-http(s)/about:blank URLs.
+   * This covers:
+   *   - Clicked file:/javascript: links
+   *   - window.location assignments
+   *   - iframe navigations
+   *   - Any other indirect navigation (not just page.navigate)
+   */
+  browser.webNavigation.onBeforeNavigate.addListener((details) => {
+    const url = details.url;
+    if (!url) return;
+
+    // Allow http(s) and about:blank
+    if (url === "about:blank") return;
+    try {
+      const parsed = new URL(url);
+      const scheme = parsed.protocol.toLowerCase();
+      if (scheme === "http:" || scheme === "https:") return;
+    } catch (e) {
+      // Invalid URL — let the browser handle it
+      return;
+    }
+
+    // Block dangerous schemes (file:, javascript:, data:, blob:, etc.)
+    console.warn(`[BRP] Navigation sentinel: BLOCKED ${url} in tab ${details.tabId}`);
+    // Cancel the navigation by redirecting to about:blank
+    browser.tabs.update(details.tabId, { url: "about:blank" }).catch(() => {});
+    sendToBridge({
+      jsonrpc: "2.0",
+      method: "notification/navigationBlocked",
+      params: {
+        tabId: details.tabId,
+        url: url,
+        reason: "Blocked by BRP navigation sentinel (non-http(s) scheme)",
+      },
+    });
+  });
 
   // ─── Event Forwarding ───
 

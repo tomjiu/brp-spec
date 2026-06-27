@@ -189,9 +189,23 @@
       }
     };
 
-    // Add value for inputs
+    // Add value for inputs (with sensitive field redaction)
     if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") {
-      node.value = el.value || "";
+      const inputType = (el.type || "text").toLowerCase();
+      const autocomplete = el.getAttribute("autocomplete") || "";
+
+      // Redact sensitive values
+      const isSensitive =
+        inputType === "password" ||
+        inputType === "hidden" ||
+        ["current-password", "new-password", "cc-number", "cc-csc"].includes(autocomplete);
+
+      if (isSensitive) {
+        node.value = "[REDACTED]";
+        node.redacted = true;
+      } else {
+        node.value = el.value || "";
+      }
       node.checked = el.checked || false;
       node.disabled = el.disabled || false;
       node.readOnly = el.readOnly || false;
