@@ -189,9 +189,39 @@
       }
     };
 
-    // Add value for inputs
+    // Add value for inputs (with sensitive field redaction)
     if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") {
-      node.value = el.value || "";
+      const inputType = (el.type || "text").toLowerCase();
+      const autocomplete = el.getAttribute("autocomplete") || "";
+
+      // Keywords that indicate a sensitive field (checked against name, id, placeholder)
+      const SENSITIVE_KEYWORDS = [
+        "password", "passwd", "secret", "cvv", "csc", "ccv",
+        "ssn", "otp", "pin", "creditcard", "credit-card", "cc-number",
+        "cardnumber", "securitycode", "verification",
+      ];
+
+      const nameIdPlaceholder = [
+        el.name || "",
+        el.id || "",
+        el.placeholder || "",
+      ].join(" ").toLowerCase();
+
+      const keywordMatch = SENSITIVE_KEYWORDS.some(kw => nameIdPlaceholder.includes(kw));
+
+      // Redact sensitive values
+      const isSensitive =
+        inputType === "password" ||
+        inputType === "hidden" ||
+        ["current-password", "new-password", "cc-number", "cc-csc"].includes(autocomplete) ||
+        keywordMatch;
+
+      if (isSensitive) {
+        node.value = "[REDACTED]";
+        node.redacted = true;
+      } else {
+        node.value = el.value || "";
+      }
       node.checked = el.checked || false;
       node.disabled = el.disabled || false;
       node.readOnly = el.readOnly || false;

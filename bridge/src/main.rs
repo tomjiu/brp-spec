@@ -9,6 +9,13 @@
 /// 3. Forwards all other requests to the Firefox Extension via WebSocket
 /// 4. Receives notifications from Extension and forwards to AI Client via stdout
 /// 5. Assigns sequence numbers to all outbound notifications (RFC0001 §13)
+///
+/// Security (v0.3.0):
+/// - WebSocket Origin validation (rejects non-extension origins)
+/// - Server-side connection rate limiting (pre-upgrade)
+/// - JSON-RPC message size / depth limits
+/// - Optional token auth (Standalone mode: BRP_AUTH_TOKEN env var or extension Options page)
+/// - Constant-time credential comparison via `subtle::ConstantTimeEq`
 
 mod protocol;
 mod transport;
@@ -16,110 +23,129 @@ mod transport;
 use protocol::*;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::io::Write;
-use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use futures_util::{SinkExt, StreamExt};
+use subtle::ConstantTimeEq;
 
-// ─── Auth Token ───
+// ─── Configuration ───
 
-/// Generate a random auth token and write to a well-known file.
-/// Returns the token string.
-fn generate_auth_token() -> String {
-    let token = uuid::Uuid::new_v4().to_string();
-    let path = token_file_path();
+/// Maximum allowed JSON-RPC message size (bytes).
+const MAX_MESSAGE_SIZE: usize = 4 * 1024 * 1024; // 4 MB
 
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+/// Maximum JSON nesting depth.
+const MAX_JSON_DEPTH: usize = 32;
+
+/// Maximum number of concurrent unauthenticated WebSocket connections.
+const MAX_UNAUTHENTICATED_CONNECTIONS: usize = 5;
+
+/// Maximum connections per second from loopback.
+const MAX_CONNECTIONS_PER_SECOND: usize = 10;
+
+/// Rate limiter state for server-side connection throttling.
+struct RateLimiter {
+    /// Timestamps of recent connection attempts (sliding window).
+    recent_connections: Vec<Instant>,
+    /// Current number of unauthenticated (pending registration) connections.
+    unauthenticated_count: usize,
+}
+
+impl RateLimiter {
+    fn new() -> Self {
+        Self {
+            recent_connections: Vec::new(),
+            unauthenticated_count: 0,
+        }
     }
 
-    let tmp_path = path.with_extension("tmp");
-    if let Err(e) = (|| -> std::io::Result<()> {
-        let mut f = std::fs::File::create(&tmp_path)?;
-        f.write_all(token.as_bytes())?;
-        f.sync_all()?;
-        std::fs::rename(&tmp_path, &path)?;
+    /// Check if a new connection should be accepted.
+    /// Returns Ok(()) if allowed, Err(reason) if rate-limited.
+    fn check_connection(&mut self) -> Result<(), &'static str> {
+        let now = Instant::now();
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        // Prune entries older than 1 second
+        self.recent_connections.retain(|t| now.duration_since(*t).as_secs_f64() < 1.0);
+
+        // Check connections per second
+        if self.recent_connections.len() >= MAX_CONNECTIONS_PER_SECOND {
+            return Err("Too many connections per second");
         }
+
+        // Check concurrent unauthenticated connections
+        if self.unauthenticated_count >= MAX_UNAUTHENTICATED_CONNECTIONS {
+            return Err("Too many unauthenticated connections");
+        }
+
+        self.recent_connections.push(now);
+        self.unauthenticated_count += 1;
         Ok(())
-    })() {
-        log::error!("[Auth] Failed to write token file: {}", e);
-    } else {
-        log::info!("[Auth] Token written to {}", path.display());
     }
 
-    token
-}
-
-/// Cross-platform token file location.
-fn token_file_path() -> PathBuf {
-    if let Ok(p) = std::env::var("BRP_TOKEN_FILE") {
-        return PathBuf::from(p);
+    fn on_authenticated(&mut self) {
+        self.unauthenticated_count = self.unauthenticated_count.saturating_sub(1);
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(appdata) = std::env::var("APPDATA") {
-            let dir = PathBuf::from(appdata).join("brp-bridge");
-            return dir.join("token");
-        }
-    }
-
-    if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home).join(".brp-bridge-token")
-    } else {
-        std::env::temp_dir().join("brp-bridge-token")
+    fn on_auth_failed(&mut self) {
+        self.unauthenticated_count = self.unauthenticated_count.saturating_sub(1);
     }
 }
 
-/// Run a minimal HTTP server to serve the auth token.
-/// Extension fetches from http://127.0.0.1:<port>/token
-async fn run_token_server(addr: &str, token: Arc<String>) {
-    let listener = match TcpListener::bind(addr).await {
-        Ok(l) => l,
-        Err(e) => {
-            log::error!("[TokenServer] Failed to bind {}: {}", addr, e);
-            return;
-        }
-    };
-    log::info!("[TokenServer] Serving auth token at http://{}", addr);
+// ─── Origin Validation ───
 
-    loop {
-        match listener.accept().await {
-            Ok((mut stream, _)) => {
-                let token = token.clone();
-                tokio::spawn(async move {
-                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                    let mut buf = vec![0u8; 1024];
-                    let _ = stream.read(&mut buf).await;
-
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\n\
-                         Content-Type: text/plain\r\n\
-                         Content-Length: {}\r\n\
-                         Access-Control-Allow-Origin: *\r\n\
-                         Connection: close\r\n\
-                         \r\n\
-                         {}",
-                        token.len(),
-                        token
-                    );
-                    let _ = stream.write_all(response.as_bytes()).await;
-                    let _ = stream.flush().await;
-                });
-            }
-            Err(e) => {
-                log::error!("[TokenServer] Accept error: {}", e);
-            }
-        }
+/// Allowed Origin header values for WebSocket connections.
+/// In Native Messaging mode, the extension sends `Origin: null`.
+/// In regular mode, it sends `moz-extension://<extension-id>`.
+fn is_valid_origin(origin: Option<&str>) -> bool {
+    match origin {
+        // Native Messaging launched extensions send Origin: null
+        Some("null") => true,
+        // moz-extension:// origins (Firefox extension)
+        Some(o) if o.starts_with("moz-extension://") => true,
+        // chrome-extension:// origins (for future Chrome support)
+        Some(o) if o.starts_with("chrome-extension://") => true,
+        // No Origin header — could be a raw TCP client (local process)
+        // We allow this because Origin validation defends against *browser* attacks.
+        // Local processes are defended by the token/challenge.
+        None => true,
+        _ => false,
     }
+}
+
+// ─── JSON Validation ───
+
+/// Validate JSON depth to prevent stack overflow from deeply nested structures.
+fn validate_json_depth(value: &Value, max_depth: usize) -> bool {
+    if max_depth == 0 {
+        return false;
+    }
+    match value {
+        Value::Array(arr) => {
+            if arr.len() > 1024 {
+                return false; // Array length limit
+            }
+            arr.iter().all(|v| validate_json_depth(v, max_depth - 1))
+        }
+        Value::Object(obj) => {
+            if obj.len() > 256 {
+                return false; // Object key limit
+            }
+            obj.values().all(|v| validate_json_depth(v, max_depth - 1))
+        }
+        _ => true,
+    }
+}
+
+// ─── Constant-Time Token Comparison ───
+
+/// Compare two strings in constant time to prevent timing attacks.
+fn secure_compare(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.as_bytes().ct_eq(b.as_bytes()).into()
 }
 
 // ─── Types ───
@@ -195,63 +221,128 @@ async fn run_ws_server(
     };
 
     log::info!("[WsServer] Listening on {} for Firefox Extension...", addr);
+    log::info!("[WsServer] Token authentication ENABLED (mandatory)");
+
+    let rate_limiter = Arc::new(Mutex::new(RateLimiter::new()));
 
     loop {
         match listener.accept().await {
             Ok((stream, peer)) => {
+                // ── Rate limiting (pre-upgrade) ──
+                {
+                    let mut rl = rate_limiter.lock().await;
+                    if let Err(reason) = rl.check_connection() {
+                        log::warn!("[WsServer] Rate limited connection from {}: {}", peer, reason);
+                        // Close TCP connection immediately (no WS upgrade)
+                        drop(stream);
+                        continue;
+                    }
+                }
+
                 log::info!("[WsServer] Connection from {}", peer);
                 let state = state.clone();
                 let notify_tx = notify_tx.clone();
                 let auth_token = auth_token.clone();
+                let rate_limiter = rate_limiter.clone();
 
                 tokio::spawn(async move {
-                    match tokio_tungstenite::accept_async(stream).await {
+                    // ── Origin validation (before WS upgrade) ──
+                    // We use a custom accept callback to check the Origin header
+                    let ws_result = tokio_tungstenite::accept_hdr_async(
+                        stream,
+                        OriginValidator,
+                    ).await;
+
+                    match ws_result {
                         Ok(ws_stream) => {
                             let (mut tx, mut receiver) = ws_stream.split();
-                            let auth_token = auth_token.clone();
 
-                            // Wait for registration message with token auth
-                            let browser_id = match receiver.next().await {
-                                Some(Ok(WsMessage::Text(text))) => {
+                            // Wait for registration message
+                            let browser_id = match tokio::time::timeout(
+                                std::time::Duration::from_secs(10),
+                                receiver.next()
+                            ).await {
+                                Ok(Some(Ok(WsMessage::Text(text)))) => {
+                                    // Check message size
+                                    if text.len() > MAX_MESSAGE_SIZE {
+                                        log::warn!("[WsServer] Registration message too large from {}", peer);
+                                        let _ = tx.send(WsMessage::Close(None)).await;
+                                        rate_limiter.lock().await.on_auth_failed();
+                                        return;
+                                    }
+
                                     match serde_json::from_str::<Value>(&text) {
-                                        Ok(v) if v.get("method").and_then(|m| m.as_str()) == Some("register") => {
-                                            // Validate auth token
-                                            let provided_token = v.get("params")
-                                                .and_then(|p| p.get("token"))
-                                                .and_then(|t| t.as_str())
-                                                .unwrap_or("");
-
-                                            if provided_token != auth_token.as_str() {
-                                                log::warn!("[WsServer] AUTH FAILED from {} (token mismatch)", peer);
-                                                let err_msg = json!({
-                                                    "jsonrpc": "2.0",
-                                                    "error": {
-                                                        "code": -32001,
-                                                        "message": "Authentication failed: invalid token"
-                                                    }
-                                                });
-                                                let _ = tx.send(WsMessage::Text(err_msg.to_string().into())).await;
+                                        Ok(v) => {
+                                            // Validate JSON depth
+                                            if !validate_json_depth(&v, MAX_JSON_DEPTH) {
+                                                log::warn!("[WsServer] Registration message too deep from {}", peer);
                                                 let _ = tx.send(WsMessage::Close(None)).await;
+                                                rate_limiter.lock().await.on_auth_failed();
                                                 return;
                                             }
 
-                                            let bid = v.get("params")
-                                                .and_then(|p| p.get("browserId"))
-                                                .and_then(|b| b.as_str())
-                                                .unwrap_or("unknown")
-                                                .to_string();
-                                            log::info!("[WsServer] Extension authenticated: {} from {}", bid, peer);
-                                            bid
+                                            if v.get("method").and_then(|m| m.as_str()) == Some("register") {
+                                                // ── Token validation (always required) ──
+                                                let provided_token = v.get("params")
+                                                    .and_then(|p| p.get("token"))
+                                                    .and_then(|t| t.as_str())
+                                                    .unwrap_or("");
+
+                                                if !secure_compare(provided_token, &auth_token) {
+                                                    log::warn!("[WsServer] AUTH FAILED from {} (token mismatch)", peer);
+                                                    let err_msg = json!({
+                                                        "jsonrpc": "2.0",
+                                                        "error": {
+                                                            "code": -32001,
+                                                            "message": "Authentication failed: invalid token"
+                                                        }
+                                                    });
+                                                    let _ = tx.send(WsMessage::Text(err_msg.to_string().into())).await;
+                                                    let _ = tx.send(WsMessage::Close(None)).await;
+                                                    rate_limiter.lock().await.on_auth_failed();
+                                                    return;
+                                                }
+
+                                                let bid = v.get("params")
+                                                    .and_then(|p| p.get("browserId"))
+                                                    .and_then(|b| b.as_str())
+                                                    .unwrap_or("unknown")
+                                                    .to_string();
+                                                log::info!("[WsServer] Extension authenticated: {} from {}", bid, peer);
+
+                                                // Mark as authenticated in rate limiter
+                                                rate_limiter.lock().await.on_authenticated();
+
+                                                bid
+                                            } else {
+                                                log::warn!("[WsServer] First message is not a register, rejecting");
+                                                let _ = tx.send(WsMessage::Close(None)).await;
+                                                rate_limiter.lock().await.on_auth_failed();
+                                                return;
+                                            }
                                         }
-                                        _ => {
-                                            log::warn!("[WsServer] First message is not a register, rejecting");
+                                        Err(_) => {
+                                            log::warn!("[WsServer] Invalid JSON in registration from {}", peer);
                                             let _ = tx.send(WsMessage::Close(None)).await;
+                                            rate_limiter.lock().await.on_auth_failed();
                                             return;
                                         }
                                     }
                                 }
-                                _ => {
-                                    log::warn!("[WsServer] Connection closed before registration");
+                                Ok(Some(Ok(_))) => {
+                                    log::warn!("[WsServer] Non-text first message from {}", peer);
+                                    rate_limiter.lock().await.on_auth_failed();
+                                    return;
+                                }
+                                Ok(_) => {
+                                    log::warn!("[WsServer] Connection closed before registration from {}", peer);
+                                    rate_limiter.lock().await.on_auth_failed();
+                                    return;
+                                }
+                                Err(_) => {
+                                    log::warn!("[WsServer] Registration timeout from {}", peer);
+                                    let _ = tx.send(WsMessage::Close(None)).await;
+                                    rate_limiter.lock().await.on_auth_failed();
                                     return;
                                 }
                             };
@@ -267,12 +358,36 @@ async fn run_ws_server(
                             // Handle incoming messages from extension
                             handle_ext_messages(&browser_id, receiver, state.clone(), notify_tx).await;
 
-                            // Extension disconnected
-                            let mut s = state.write().await;
-                            s.remove_extension(&browser_id);
+                            // Extension disconnected — fail all pending requests for this browser
+                            {
+                                let mut s = state.write().await;
+                                s.remove_extension(&browser_id);
+
+                                // Fail all pending requests for this browser immediately
+                                let failed_ids: Vec<i64> = s.pending.iter()
+                                    .filter(|(_, (_, _, bid))| bid == &browser_id)
+                                    .map(|(id, _)| *id)
+                                    .collect();
+
+                                for ext_id in failed_ids {
+                                    if let Some((client_id, tx, _)) = s.pending.remove(&ext_id) {
+                                        let err_resp = Response::error(client_id, ErrorResponse {
+                                            code: -32001,
+                                            message: "Extension disconnected during request".into(),
+                                            data: Some(json!({
+                                                "errorCode": "BRP_EXTENSION_DISCONNECTED",
+                                                "retriable": true
+                                            })),
+                                        });
+                                        let _ = tx.send(err_resp);
+                                    }
+                                }
+                            }
                         }
                         Err(e) => {
-                            log::error!("[WsServer] WebSocket handshake failed: {}", e);
+                            // Origin validation failed or WS handshake error
+                            log::warn!("[WsServer] Handshake rejected from {}: {}", peer, e);
+                            rate_limiter.lock().await.on_auth_failed();
                         }
                     }
                 });
@@ -281,6 +396,31 @@ async fn run_ws_server(
                 log::error!("[WsServer] Accept error: {}", e);
             }
         }
+    }
+}
+
+/// Custom WebSocket handshake validator that checks the Origin header.
+struct OriginValidator;
+
+impl tokio_tungstenite::tungstenite::handshake::server::Callback for OriginValidator {
+    fn on_request(
+        self,
+        request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+        response: tokio_tungstenite::tungstenite::handshake::server::Response,
+    ) -> Result<tokio_tungstenite::tungstenite::handshake::server::Response, tokio_tungstenite::tungstenite::handshake::server::ErrorResponse> {
+        let origin = request.headers()
+            .get("origin")
+            .and_then(|v| v.to_str().ok());
+
+        if !is_valid_origin(origin) {
+            log::warn!("[WsServer] REJECTED Origin: {:?}", origin);
+            let err = tokio_tungstenite::tungstenite::handshake::server::ErrorResponse::new(Some(
+                "Invalid Origin".to_string()
+            ));
+            return Err(err);
+        }
+
+        Ok(response)
     }
 }
 
@@ -297,9 +437,21 @@ async fn handle_ext_messages(
     while let Some(msg) = receiver.next().await {
         match msg {
             Ok(WsMessage::Text(text)) => {
+                // ── Message size limit ──
+                if text.len() > MAX_MESSAGE_SIZE {
+                    log::warn!("[{}] Message too large ({} bytes), dropping", browser_id, text.len());
+                    continue;
+                }
+
                 log::debug!("[{}] ← {}", browser_id, &text[..text.len().min(300)]);
 
                 if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                    // ── JSON depth validation ──
+                    if !validate_json_depth(&value, MAX_JSON_DEPTH) {
+                        log::warn!("[{}] Message JSON too deep, dropping", browser_id);
+                        continue;
+                    }
+
                     // Response to a pending request?
                     if let Some(id_num) = value.get("id").and_then(|v| v.as_i64()) {
                         if value.get("result").is_some() || value.get("error").is_some() {
@@ -407,6 +559,70 @@ async fn handle_request(req: Request, state: Arc<RwLock<BridgeState>>) -> Respon
         // ── All other methods: forward to extension ──
 
         _ => {
+            // ── Method whitelist ──
+            const ALLOWED_METHODS: &[&str] = &[
+                "tab.list", "tab.open", "tab.close", "tab.select",
+                "page.navigate", "page.getInteractionTree", "page.screenshot",
+                "page.goBack", "page.goForward", "page.reload", "page.waitForSelector",
+                "element.click", "element.type", "element.fill", "element.scroll",
+                "element.hover", "element.select", "element.getAttribute",
+                "keyboard.press",
+                "script.execute",
+            ];
+
+            if !ALLOWED_METHODS.contains(&method.as_str()) {
+                return Response::error(id, ErrorResponse {
+                    code: -32601,
+                    message: format!("Unknown method: {}", method).into(),
+                    data: Some(json!({
+                        "errorCode": "BRP_METHOD_NOT_FOUND",
+                        "retriable": false
+                    })),
+                });
+            }
+
+            // ── URL scheme validation (defense in depth — extension also validates) ──
+            if method == "page.navigate" || method == "tab.open" {
+                if let Some(ref params) = req.params {
+                    let url = params.get("url").or_else(|| params.get("uri"))
+                        .and_then(|u| u.as_str())
+                        .unwrap_or("");
+                    if !url.is_empty() {
+                        let is_safe = url == "about:blank" || {
+                            url.starts_with("https://") || url.starts_with("http://")
+                        };
+                        if !is_safe {
+                            return Response::error(id, ErrorResponse {
+                                code: -32602,
+                                message: format!("Blocked URL scheme (only http(s) and about:blank allowed): {}", url).into(),
+                                data: Some(json!({
+                                    "errorCode": "BRP_URL_SCHEME_BLOCKED",
+                                    "retriable": false
+                                })),
+                            });
+                        }
+                    }
+                }
+            }
+
+            // ── script.execute gate (off by default) ──
+            if method == "script.execute" {
+                let allowed = std::env::var("BRP_ALLOW_SCRIPT_EXECUTE")
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
+                if !allowed {
+                    return Response::error(id, ErrorResponse {
+                        code: -32602,
+                        message: "script.execute is disabled by default. Set BRP_ALLOW_SCRIPT_EXECUTE=1 to enable.".into(),
+                        data: Some(json!({
+                            "errorCode": "BRP_PERMISSION_DENIED",
+                            "retriable": false,
+                            "recoveryHint": "Set environment variable BRP_ALLOW_SCRIPT_EXECUTE=1 before starting the Bridge"
+                        })),
+                    });
+                }
+            }
+
             // Check session state
             {
                 let s = state.read().await;
@@ -474,13 +690,41 @@ async fn forward_to_extension(req: Request, state: Arc<RwLock<BridgeState>>) -> 
         "params": params
     });
 
-    if let Err(e) = ext_sender.lock().await.send(WsMessage::Text(ext_msg.to_string().into())).await {
+    // ── Outbound message size check ──
+    let ext_msg_str = ext_msg.to_string();
+    if ext_msg_str.len() > MAX_MESSAGE_SIZE {
+        let mut s = state.write().await;
+        s.pending.remove(&ext_id);
+        return Response::error(req.id, ErrorResponse {
+            code: -32000,
+            message: "Request too large to forward".into(),
+            data: Some(json!({
+                "errorCode": "BRP_MESSAGE_TOO_LARGE",
+                "retriable": false,
+                "size": ext_msg_str.len(),
+                "maxSize": MAX_MESSAGE_SIZE
+            })),
+        });
+    }
+
+    if let Err(e) = ext_sender.lock().await.send(WsMessage::Text(ext_msg_str.into())).await {
         let mut s = state.write().await;
         s.pending.remove(&ext_id);
         return Response::internal_error(req.id, &format!("Extension send failed: {}", e));
     }
 
-    match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+    // ── Dynamic forwarding timeout ──
+    // Use client-specified timeout + buffer, with a minimum of 30s.
+    // This fixes the conflict between the 30s Bridge timeout and 60s waitForSelector cap.
+    let client_timeout_ms = params.get("timeout")
+        .and_then(|t| t.as_u64())
+        .unwrap_or(0);
+    let timeout_secs = std::cmp::max(
+        30,
+        (client_timeout_ms / 1000) + 10, // client timeout + 10s buffer
+    );
+
+    match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), rx).await {
         Ok(Ok(response)) => response,
         Ok(Err(_)) => {
             let mut s = state.write().await;
@@ -492,7 +736,7 @@ async fn forward_to_extension(req: Request, state: Arc<RwLock<BridgeState>>) -> 
             s.pending.remove(&ext_id);
             Response::error(req.id, ErrorResponse {
                 code: -32000,
-                message: "Extension request timed out (30s)".into(),
+                message: format!("Extension request timed out ({}s)", timeout_secs).into(),
                 data: Some(json!({
                     "errorCode": "BRP_TIMEOUT",
                     "retriable": true
@@ -516,8 +760,64 @@ async fn main() {
 
     let state = Arc::new(RwLock::new(BridgeState::new()));
 
-    // ── Auth Token ──
-    let auth_token = Arc::new(generate_auth_token());
+    // ── Auth Token (always generated, always required) ──
+    // The Bridge always generates a random token at startup.
+    // If BRP_AUTH_TOKEN is set, use that instead (user override).
+    // Token is written to a file (0600) and sent to the adapter via stdout.
+    // This defends against local process attacks (the second column of the threat model).
+    let auth_token: Arc<String> = Arc::new(
+        std::env::var("BRP_AUTH_TOKEN")
+            .ok()
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| {
+                let token = uuid::Uuid::new_v4().to_string();
+                // Write token to file with restricted permissions
+                let path = token_file_path();
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let tmp_path = path.with_extension("tmp");
+                if let Err(e) = (|| -> std::io::Result<()> {
+                    use std::io::Write;
+                    let mut f = std::fs::File::create(&tmp_path)?;
+                    f.write_all(token.as_bytes())?;
+                    f.sync_all()?;
+                    std::fs::rename(&tmp_path, &path)?;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+                    }
+                    Ok(())
+                })() {
+                    log::warn!("[Auth] Failed to write token file: {}", e);
+                } else {
+                    log::info!("[Auth] Token written to {}", path.display());
+                }
+                log::info!("[Auth] Auto-generated token: configure in Extension Options page");
+                token
+            })
+    );
+
+    log::info!("[Auth] Token authentication ENABLED (mandatory)");
+
+    // Cross-platform token file location.
+    fn token_file_path() -> std::path::PathBuf {
+        if let Ok(p) = std::env::var("BRP_TOKEN_FILE") {
+            return std::path::PathBuf::from(p);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(appdata) = std::env::var("APPDATA") {
+                return std::path::PathBuf::from(appdata).join("brp-bridge").join("token");
+            }
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            std::path::PathBuf::from(home).join(".brp-bridge-token")
+        } else {
+            std::env::temp_dir().join("brp-bridge-token")
+        }
+    }
 
     // ── Channels ──
     let (notify_tx, mut notify_rx) = mpsc::channel::<Value>(64);
@@ -526,23 +826,6 @@ async fn main() {
     // ── WebSocket Server for Firefox Extension ──
     let ws_addr = std::env::var("BRP_WS_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:9817".into());
-
-    // Token HTTP server: serve auth token on the port above WS port
-    let token_addr = std::env::var("BRP_TOKEN_ADDR")
-        .unwrap_or_else(|_| {
-            // Default: WS port + 1
-            let ws_port: u16 = ws_addr.rsplit(':').next()
-                .and_then(|p| p.parse().ok())
-                .unwrap_or(9817);
-            format!("127.0.0.1:{}", ws_port + 1)
-        });
-
-    {
-        let auth_token = auth_token.clone();
-        tokio::spawn(async move {
-            run_token_server(&token_addr, auth_token).await;
-        });
-    }
 
     {
         let state = state.clone();
@@ -579,13 +862,26 @@ async fn main() {
         loop {
             match transport::read_native_message() {
                 Ok(Some(value)) => {
-                    if let Ok(req) = serde_json::from_value::<Request>(value.clone()) {
+                    // ── Inbound message size check ──
+                    let msg_str = value.to_string();
+                    if msg_str.len() > MAX_MESSAGE_SIZE {
+                        log::warn!("[Stdin] Message too large ({} bytes), dropping", msg_str.len());
+                        continue;
+                    }
+
+                    // ── JSON depth validation ──
+                    if !validate_json_depth(&value, MAX_JSON_DEPTH) {
+                        log::warn!("[Stdin] Message JSON too deep, dropping");
+                        continue;
+                    }
+
+                    if let Ok(req) = serde_json::from_value::<Request>(value) {
                         if request_tx.blocking_send(req).is_err() {
                             log::info!("[Stdin] Request channel closed");
                             break;
                         }
                     } else {
-                        log::warn!("[Stdin] Unparseable message: {}", value);
+                        log::warn!("[Stdin] Unparseable message (not a valid Request)");
                     }
                 }
                 Ok(None) => {
@@ -608,6 +904,22 @@ async fn main() {
             }
         }
     });
+
+    // ── Send auth token to adapter via stdout ──
+    // The MCP adapter reads this notification and can relay the token.
+    // Token file path is included so the adapter can verify or display it.
+    {
+        let token_notification = json!({
+            "jsonrpc": "2.0",
+            "method": "notification/bridge.authToken",
+            "params": {
+                "token": auth_token.as_str(),
+                "tokenFile": token_file_path().to_string_lossy(),
+                "message": "Configure this token in the Extension Options page for authentication"
+            }
+        });
+        let _ = notify_tx.send(token_notification).await;
+    }
 
     // ── Main Request Loop ──
     while let Some(req) = request_rx.recv().await {

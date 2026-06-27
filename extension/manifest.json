@@ -1,12 +1,13 @@
 {
   "manifest_version": 2,
   "name": "BRP Bridge Extension",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Browser Runtime Protocol - Firefox Extension for AI agent interaction",
   "permissions": [
     "activeTab",
     "tabs",
     "webNavigation",
+    "storage",
     "<all_urls>"
   ],
   "background": {
@@ -20,6 +21,10 @@
       "run_at": "document_idle"
     }
   ],
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
   "browser_specific_settings": {
     "gecko": {
       "id": "brp-bridge@brp-spec.org",
