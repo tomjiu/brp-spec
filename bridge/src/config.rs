@@ -24,8 +24,7 @@ impl BridgeConfig {
     /// Token is auto-generated if not provided via BRP_AUTH_TOKEN,
     /// and written to a platform-specific file with 0600 permissions.
     pub fn load() -> Self {
-        let ws_addr = std::env::var("BRP_WS_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:9817".to_string());
+        let ws_addr = std::env::var("BRP_WS_ADDR").unwrap_or_else(|_| "127.0.0.1:9817".to_string());
 
         let token_file_path = default_token_path();
 
@@ -39,9 +38,7 @@ impl BridgeConfig {
                 } else {
                     log::info!("[Auth] Token written to {}", token_file_path.display());
                 }
-                log::info!(
-                    "[Auth] Auto-generated token: configure in Extension Options page"
-                );
+                log::info!("[Auth] Auto-generated token: configure in Extension Options page");
                 token
             });
 

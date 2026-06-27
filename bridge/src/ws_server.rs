@@ -10,7 +10,9 @@ use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use crate::auth::{secure_compare, validate_json_depth, OriginValidator, MAX_JSON_DEPTH, MAX_MESSAGE_SIZE};
+use crate::auth::{
+    secure_compare, validate_json_depth, OriginValidator, MAX_JSON_DEPTH, MAX_MESSAGE_SIZE,
+};
 use crate::protocol::*;
 use crate::ratelimit::RateLimiter;
 use crate::router::BridgeState;
@@ -97,18 +99,13 @@ async fn handle_ws_connection(
             let (mut tx, mut receiver) = ws_stream.split();
 
             // Wait for registration message (10s timeout)
-            let browser_id = match register_extension(
-                &mut receiver,
-                &mut tx,
-                &auth_token,
-                &rate_limiter,
-                peer,
-            )
-            .await
-            {
-                Some(id) => id,
-                None => return,
-            };
+            let browser_id =
+                match register_extension(&mut receiver, &mut tx, &auth_token, &rate_limiter, peer)
+                    .await
+                {
+                    Some(id) => id,
+                    None => return,
+                };
 
             let ext_sender = Arc::new(Mutex::new(tx));
 
@@ -174,11 +171,7 @@ async fn register_extension(
 ) -> Option<String> {
     use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-    let text = match tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        receiver.next(),
-    )
-    .await
+    let text = match tokio::time::timeout(std::time::Duration::from_secs(10), receiver.next()).await
     {
         Ok(Some(Ok(WsMessage::Text(t)))) => t,
         Ok(Some(Ok(_))) => {
@@ -204,10 +197,7 @@ async fn register_extension(
 
     // Check message size
     if text.len() > MAX_MESSAGE_SIZE {
-        log::warn!(
-            "[WsServer] Registration message too large from {}",
-            peer
-        );
+        log::warn!("[WsServer] Registration message too large from {}", peer);
         let _ = tx.send(WsMessage::Close(None)).await;
         rate_limiter.lock().await.on_auth_failed();
         return None;
@@ -225,10 +215,7 @@ async fn register_extension(
 
     // Validate JSON depth
     if !validate_json_depth(&v, MAX_JSON_DEPTH) {
-        log::warn!(
-            "[WsServer] Registration message too deep from {}",
-            peer
-        );
+        log::warn!("[WsServer] Registration message too deep from {}", peer);
         let _ = tx.send(WsMessage::Close(None)).await;
         rate_limiter.lock().await.on_auth_failed();
         return None;
@@ -236,9 +223,7 @@ async fn register_extension(
 
     // Must be a register message
     if v.get("method").and_then(|m| m.as_str()) != Some("register") {
-        log::warn!(
-            "[WsServer] First message is not a register, rejecting"
-        );
+        log::warn!("[WsServer] First message is not a register, rejecting");
         let _ = tx.send(WsMessage::Close(None)).await;
         rate_limiter.lock().await.on_auth_failed();
         return None;
@@ -252,10 +237,7 @@ async fn register_extension(
         .unwrap_or("");
 
     if !secure_compare(provided_token, auth_token) {
-        log::warn!(
-            "[WsServer] AUTH FAILED from {} (token mismatch)",
-            peer
-        );
+        log::warn!("[WsServer] AUTH FAILED from {} (token mismatch)", peer);
         let err_msg = json!({
             "jsonrpc": "2.0",
             "error": {
@@ -263,9 +245,7 @@ async fn register_extension(
                 "message": "Authentication failed: invalid token"
             }
         });
-        let _ = tx
-            .send(WsMessage::Text(err_msg.to_string().into()))
-            .await;
+        let _ = tx.send(WsMessage::Text(err_msg.to_string().into())).await;
         let _ = tx.send(WsMessage::Close(None)).await;
         rate_limiter.lock().await.on_auth_failed();
         return None;
@@ -278,11 +258,7 @@ async fn register_extension(
         .unwrap_or("unknown")
         .to_string();
 
-    log::info!(
-        "[WsServer] Extension authenticated: {} from {}",
-        bid,
-        peer
-    );
+    log::info!("[WsServer] Extension authenticated: {} from {}", bid, peer);
 
     rate_limiter.lock().await.on_authenticated();
     Some(bid)
@@ -336,9 +312,7 @@ pub async fn handle_ext_messages(
                                         obj.insert("browserId".into(), json!(browser_id));
                                     }
                                 }
-                                if let Ok(response) =
-                                    serde_json::from_value::<Response>(resp)
-                                {
+                                if let Ok(response) = serde_json::from_value::<Response>(resp) {
                                     let _ = tx.send(response);
                                 }
                             } else {
@@ -359,8 +333,7 @@ pub async fn handle_ext_messages(
                             s.session.next_sequence()
                         };
 
-                        let mut params =
-                            value.get("params").cloned().unwrap_or(json!({}));
+                        let mut params = value.get("params").cloned().unwrap_or(json!({}));
                         params["sequence"] = json!(seq);
                         params["browserId"] = json!(browser_id);
 

@@ -115,10 +115,7 @@ pub async fn handle_request(
                 .keys()
                 .map(|id| json!({ "browserId": id }))
                 .collect();
-            Response::success(
-                id,
-                json!({ "browsers": browsers, "count": browsers.len() }),
-            )
+            Response::success(id, json!({ "browsers": browsers, "count": browsers.len() }))
         }
 
         // ── All other methods: validate and forward to extension ──
@@ -150,17 +147,20 @@ pub async fn handle_request(
                         && !url.starts_with("https://")
                         && !url.starts_with("http://")
                     {
-                        return Response::error(id, ErrorResponse {
-                            code: -32602,
-                            message: format!(
-                                "Blocked URL scheme (only http(s) and about:blank allowed): {}",
-                                url
-                            ),
-                            data: Some(json!({
-                                "errorCode": "BRP_URL_SCHEME_BLOCKED",
-                                "retriable": false
-                            })),
-                        });
+                        return Response::error(
+                            id,
+                            ErrorResponse {
+                                code: -32602,
+                                message: format!(
+                                    "Blocked URL scheme (only http(s) and about:blank allowed): {}",
+                                    url
+                                ),
+                                data: Some(json!({
+                                    "errorCode": "BRP_URL_SCHEME_BLOCKED",
+                                    "retriable": false
+                                })),
+                            },
+                        );
                     }
                 }
             }
@@ -203,10 +203,7 @@ pub async fn handle_request(
     }
 }
 
-pub async fn forward_to_extension(
-    req: Request,
-    state: Arc<RwLock<BridgeState>>,
-) -> Response {
+pub async fn forward_to_extension(req: Request, state: Arc<RwLock<BridgeState>>) -> Response {
     let target_browser = req
         .params
         .as_ref()
@@ -237,8 +234,7 @@ pub async fn forward_to_extension(
 
         let ext_id = s.next_ext_request_id();
         let (tx, rx) = oneshot::channel();
-        s.pending
-            .insert(ext_id, (req.id.clone(), tx, bid.clone()));
+        s.pending.insert(ext_id, (req.id.clone(), tx, bid.clone()));
 
         (sender, ext_id, rx, bid)
     };
@@ -292,18 +288,10 @@ pub async fn forward_to_extension(
         return Response::internal_error(req.id, &format!("Extension send failed: {}", e));
     }
 
-    let client_timeout_ms = params
-        .get("timeout")
-        .and_then(|t| t.as_u64())
-        .unwrap_or(0);
+    let client_timeout_ms = params.get("timeout").and_then(|t| t.as_u64()).unwrap_or(0);
     let timeout_secs = std::cmp::max(30, (client_timeout_ms / 1000) + 10);
 
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(timeout_secs),
-        rx,
-    )
-    .await
-    {
+    match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), rx).await {
         Ok(Ok(response)) => response,
         Ok(Err(_)) => {
             let mut s = state.write().await;
@@ -317,10 +305,7 @@ pub async fn forward_to_extension(
                 req.id,
                 ErrorResponse {
                     code: -32000,
-                    message: format!(
-                        "Extension request timed out ({}s)",
-                        timeout_secs
-                    ),
+                    message: format!("Extension request timed out ({}s)", timeout_secs),
                     data: Some(json!({
                         "errorCode": "BRP_TIMEOUT",
                         "retriable": true
