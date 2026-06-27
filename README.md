@@ -178,6 +178,23 @@ cargo run
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"0.1.0","clientInfo":{"name":"test","version":"0.1"},"capabilities":{"features":["interactionTree","events"]}}}' | ./target/debug/brp-bridge
 ```
 
+## Testing
+
+```bash
+# Quick smoke test (no Extension needed):
+# Sends initialize/shutdown/exit via stdin, verifies Bridge responses
+cd bridge
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"0.1.0"}}' | cargo run
+
+# Full E2E test requires Python 3:
+# 1. Starts Bridge with WS server
+# 2. Connects a simulated Extension via WebSocket
+# 3. Sends requests and verifies end-to-end flow
+python tests/test_e2e.py
+```
+
+E2E verified pipeline: `AI Client → stdin(Native Messaging) → Bridge → WebSocket → Extension → WebSocket → Bridge → stdout → AI Client`
+
 ## License
 
 MIT
