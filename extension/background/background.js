@@ -10,12 +10,70 @@
   "use strict";
 
   const WS_URL = "ws://127.0.0.1:9817";
+  const TOKEN_URL = "http://127.0.0.1:9818/token";
   const RECONNECT_BASE_DELAY = 1000;
   const RECONNECT_MAX_DELAY = 10000;
 
   let ws = null;
   let reconnectAttempts = 0;
   let reconnectTimer = null;
+  let authenticated = false;
+
+  // ─── Auth Token ───
+
+  async function fetchAuthToken() {
+    try {
+      const resp = await fetch(TOKEN_URL, { cache: "no-store" });
+      if (resp.ok) {
+        const token = (await resp.text()).trim();
+        if (token) {
+          console.log("[BRP] Auth token fetched");
+          return token;
+        }
+      }
+    } catch (e) {
+      console.warn("[BRP] Could not fetch auth token:", e.message || e);
+    }
+    return null;
+  }
+
+  // ─── Safe Content Script Messaging ───
+
+  const RESTRICTED_URL_PREFIXES = [
+    "about:", "chrome:", "moz-extension:", "resource:",
+    "view-source:", "blob:", "data:", "javascript:"
+  ];
+
+  function isRestrictedUrl(url) {
+    if (!url) return true;
+    return RESTRICTED_URL_PREFIXES.some(prefix => url.startsWith(prefix));
+  }
+
+  async function sendToContentScript(tabId, message, timeoutMs = 15000) {
+    try {
+      const tab = await browser.tabs.get(tabId);
+      if (isRestrictedUrl(tab.url)) {
+        return {
+          error: `Cannot interact with restricted page: ${tab.url}`,
+          errorCode: "BRP_RESTRICTED_PAGE",
+          retriable: false,
+          recoveryHint: "Navigate to a regular web page first"
+        };
+      }
+    } catch (e) {
+      // Tab may have closed; continue and let sendMessage handle it
+    }
+
+    return Promise.race([
+      browser.tabs.sendMessage(tabId, message),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error("Content script timed out (15s)")),
+          timeoutMs
+        )
+      )
+    ]);
+  }
 
   // ─── WebSocket Connection ───
 
@@ -27,14 +85,60 @@
     console.log("[BRP] Connecting to bridge at", WS_URL);
     ws = new WebSocket(WS_URL);
 
-    ws.onopen = () => {
+    ws.onopen = async () => {
       console.log("[BRP] Connected to bridge");
       reconnectAttempts = 0;
+      authenticated = false;
+
+      // Fetch auth token from Bridge's token HTTP server
+      let token = null;
+      try {
+        token = await fetchAuthToken();
+      } catch (e) {
+        console.warn("[BRP] Token fetch error:", e);
+      }
+
+      if (!token) {
+        console.error("[BRP] No auth token — bridge will reject connection");
+      }
+
+      // Detect browser and register with bridge
+      let browserName = "unknown";
+      try {
+        const info = await browser.runtime.getBrowserInfo();
+        browserName = (info.name || "Firefox").toLowerCase();
+      } catch (e) {
+        // Fallback: check userAgent for Zen
+        if (navigator.userAgent.includes("Zen")) browserName = "zen";
+        else browserName = "firefox";
+      }
+
+      const registerMsg = JSON.stringify({
+        jsonrpc: "2.0",
+        method: "register",
+        params: {
+          browserId: browserName,
+          token: token || "",
+          userAgent: navigator.userAgent,
+          extensionVersion: "0.2.0"
+        }
+      });
+      ws.send(registerMsg);
+      console.log("[BRP] Registering as:", browserName);
     };
 
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
+
+        // Check for auth rejection (bridge sends error immediately after register)
+        if (!authenticated && msg.error) {
+          console.error("[BRP] Bridge rejected registration:", msg.error.message);
+          ws.close(4001, "Auth failed");
+          return;
+        }
+
+        authenticated = true;
         console.log("[BRP] ← ", msg.method || msg.id);
         handleRequest(msg);
       } catch (e) {
@@ -43,9 +147,10 @@
     };
 
     ws.onclose = (event) => {
-      console.warn("[BRP] Disconnected (code=%d)", event.code);
+      const authFailed = event.code === 4001;
+      console.warn("[BRP] Disconnected (code=%d%s)", event.code, authFailed ? ", auth failed" : "");
       ws = null;
-      scheduleReconnect();
+      scheduleReconnect(authFailed);
     };
 
     ws.onerror = (event) => {
@@ -54,14 +159,30 @@
     };
   }
 
-  function scheduleReconnect() {
+  function scheduleReconnect(authFailed = false) {
     if (reconnectTimer) return;
-    const delay = Math.min(
-      RECONNECT_BASE_DELAY * Math.pow(2, reconnectAttempts),
-      RECONNECT_MAX_DELAY
-    );
+
+    let delay;
+    if (authFailed) {
+      // Auth failure: token file may not be ready yet (bridge just started)
+      delay = Math.min(
+        RECONNECT_BASE_DELAY * 5 * Math.pow(2, reconnectAttempts),
+        30000
+      );
+    } else {
+      delay = Math.min(
+        RECONNECT_BASE_DELAY * Math.pow(2, reconnectAttempts),
+        RECONNECT_MAX_DELAY
+      );
+    }
+
+    // Add jitter: +/- 25%
+    const jitter = delay * 0.25 * (Math.random() * 2 - 1);
+    delay = Math.round(delay + jitter);
+
     reconnectAttempts++;
-    console.log("[BRP] Reconnect in %dms (attempt %d)", delay, reconnectAttempts);
+    console.log("[BRP] Reconnect in %dms (attempt %d%s)",
+      delay, reconnectAttempts, authFailed ? ", auth failed" : "");
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       connect();
@@ -128,6 +249,30 @@
         case "element.scroll":
           result = await handleElementAction("scroll", params);
           break;
+        case "element.hover":
+          result = await handleElementAction("hover", params);
+          break;
+        case "element.select":
+          result = await handleElementAction("select", params);
+          break;
+        case "element.getAttribute":
+          result = await handleElementAction("getAttribute", params);
+          break;
+        case "keyboard.press":
+          result = await handleKeyboardPress(params);
+          break;
+        case "page.goBack":
+          result = await handleGoBack();
+          break;
+        case "page.goForward":
+          result = await handleGoForward();
+          break;
+        case "page.reload":
+          result = await handleReload();
+          break;
+        case "page.waitForSelector":
+          result = await handleElementAction("waitForSelector", params);
+          break;
         case "script.execute":
           result = await handleScriptExecute(params);
           break;
@@ -170,8 +315,11 @@
         features: ["interactionTree", "events", "screenshot"],
         actions: [
           "page.navigate", "page.getInteractionTree", "page.screenshot",
+          "page.goBack", "page.goForward", "page.reload", "page.waitForSelector",
           "tab.list", "tab.open", "tab.close", "tab.select",
           "element.click", "element.type", "element.fill", "element.scroll",
+          "element.hover", "element.select", "element.getAttribute",
+          "keyboard.press",
           "script.execute",
         ],
         treeDeltaSupported: false,
@@ -238,17 +386,58 @@
 
   async function handleGetITree(params) {
     const tabId = params?.tabId || (await getActiveTabId());
-    return await browser.tabs.sendMessage(tabId, { action: "getITree" });
+    return await sendToContentScript(tabId, { action: "getITree" });
   }
 
   async function handleElementAction(actionType, params) {
     const tabId = params?.tabId || (await getActiveTabId());
-    return await browser.tabs.sendMessage(tabId, {
+    return await sendToContentScript(tabId, {
       action: actionType,
       selector: params?.selector || params?.selectors,
       text: params?.text,
       nodeId: params?.nodeId,
+      value: params?.value,
+      values: params?.values,
+      attribute: params?.attribute,
+      key: params?.key,
+      timeout: params?.timeout,
+      css: params?.css,
     });
+  }
+
+  async function handleKeyboardPress(params) {
+    const tabId = params?.tabId || (await getActiveTabId());
+    return await sendToContentScript(tabId, {
+      action: "keyboardPress",
+      key: params?.key,
+      selector: params?.selector,
+      nodeId: params?.nodeId,
+    });
+  }
+
+  async function handleGoBack() {
+    const tabId = await getActiveTabId();
+    // Firefox doesn't have tabs.goBack, use history API
+    await browser.tabs.goBack(tabId).catch(() => {
+      // Fallback: execute history.back in page
+      return browser.tabs.executeScript(tabId, { code: "history.back()" });
+    });
+    return { success: true };
+  }
+
+  async function handleGoForward() {
+    const tabId = await getActiveTabId();
+    await browser.tabs.goForward(tabId).catch(() => {
+      return browser.tabs.executeScript(tabId, { code: "history.forward()" });
+    });
+    return { success: true };
+  }
+
+  async function handleReload() {
+    const tabId = await getActiveTabId();
+    await browser.tabs.reload(tabId);
+    await waitForNavigation(tabId, 15000);
+    return { success: true };
   }
 
   async function handleScreenshot(params) {
@@ -260,7 +449,7 @@
 
   async function handleScriptExecute(params) {
     const tabId = params?.tabId || (await getActiveTabId());
-    return await browser.tabs.sendMessage(tabId, {
+    return await sendToContentScript(tabId, {
       action: "executeScript",
       code: params?.code,
     });

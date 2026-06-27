@@ -7,11 +7,13 @@ import subprocess
 import struct
 import json
 import sys
+import os
 import time
 import socket
 import threading
 import hashlib
 import base64
+import tempfile
 
 BRIDGE_PATH = r"E:\Code\ai\brp-mvp\bridge\target\release\brp-bridge.exe"
 WS_PORT = 9818
@@ -33,7 +35,6 @@ def decode_native_msg(data):
 
 def ws_client_connect(port):
     """Connect to Bridge WS server and perform handshake."""
-    import os
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect(("127.0.0.1", port))
 
@@ -88,7 +89,6 @@ def ws_client_read(sock, timeout=10):
 
 def ws_client_send(sock, text):
     """Send a WebSocket text frame (masked, client-style)."""
-    import os
     data = text.encode("utf-8")
     length = len(data)
     frame = bytearray()
@@ -111,19 +111,47 @@ def ws_client_send(sock, text):
     sock.send(bytes(frame))
 
 
-def run_extension_simulator(bridge_started_event, results):
+def run_extension_simulator(bridge_started_event, results, token_file=None):
     """Connect to Bridge as Extension and handle forwarded requests."""
     try:
         # Wait for Bridge to start WS server
         bridge_started_event.wait(timeout=10)
-        time.sleep(0.3)  # Give WS server a moment
+        time.sleep(0.5)  # Give WS server and token file a moment
+
+        # Read auth token from file
+        token = ""
+        if token_file:
+            for _ in range(10):  # retry a few times
+                try:
+                    with open(token_file, "r") as f:
+                        token = f.read().strip()
+                    if token:
+                        break
+                except (FileNotFoundError, PermissionError):
+                    time.sleep(0.2)
+            print(f"  [Ext] Token: {'found' if token else 'MISSING'}")
 
         print("  [Ext] Connecting to Bridge WS server...")
         sock = ws_client_connect(WS_PORT)
         print("  [Ext] Connected & handshake complete")
 
+        # Send registration message with token (required by authenticated Bridge)
+        register_msg = {
+            "jsonrpc": "2.0",
+            "method": "register",
+            "params": {
+                "browserId": "test-firefox",
+                "token": token,
+                "userAgent": "E2E-Test/1.0",
+                "extensionVersion": "0.2.0"
+            }
+        }
+        ws_client_send(sock, json.dumps(register_msg))
+        print("  [Ext] → Sent registration as 'test-firefox'")
+        time.sleep(0.2)  # Let Bridge process registration
+
         msg_count = 0
-        while msg_count < 10:
+        while msg_count < 20:
             try:
                 frame = ws_client_read(sock, timeout=10)
                 if frame is None:
@@ -168,6 +196,21 @@ def run_extension_simulator(bridge_started_event, results):
                         "jsonrpc": "2.0", "id": ext_id,
                         "result": {"success": True, "matchedSelector": {"type": "css"}}
                     }
+                elif method == "element.hover":
+                    response = {
+                        "jsonrpc": "2.0", "id": ext_id,
+                        "result": {"success": True}
+                    }
+                elif method == "keyboard.press":
+                    response = {
+                        "jsonrpc": "2.0", "id": ext_id,
+                        "result": {"success": True, "key": "Enter", "modifiers": {}}
+                    }
+                elif method == "page.goBack":
+                    response = {
+                        "jsonrpc": "2.0", "id": ext_id,
+                        "result": {"success": True}
+                    }
                 else:
                     response = {
                         "jsonrpc": "2.0", "id": ext_id,
@@ -204,11 +247,14 @@ def run_extension_simulator(bridge_started_event, results):
 def main():
     print("=== BRP Bridge Full E2E Test ===\n")
 
+    # Create temp token file path
+    token_file = os.path.join(tempfile.gettempdir(), "brp-test-token")
+
     bridge_started = threading.Event()
     ext_results = {}
 
     # Start extension simulator thread
-    ext_thread = threading.Thread(target=run_extension_simulator, args=(bridge_started, ext_results))
+    ext_thread = threading.Thread(target=run_extension_simulator, args=(bridge_started, ext_results, token_file))
     ext_thread.daemon = True
     ext_thread.start()
 
@@ -221,17 +267,23 @@ def main():
         {"jsonrpc": "2.0", "id": 3, "method": "page.getInteractionTree", "params": {}},
         {"jsonrpc": "2.0", "id": 4, "method": "element.click",
          "params": {"selector": {"type": "css", "value": "#btn"}}},
-        {"jsonrpc": "2.0", "id": 5, "method": "shutdown", "params": {}},
-        {"jsonrpc": "2.0", "id": 6, "method": "exit", "params": {}},
+        {"jsonrpc": "2.0", "id": 5, "method": "element.hover",
+         "params": {"selector": {"type": "css", "value": "#menu"}}},
+        {"jsonrpc": "2.0", "id": 6, "method": "keyboard.press",
+         "params": {"key": "Enter"}},
+        {"jsonrpc": "2.0", "id": 7, "method": "page.goBack", "params": {}},
+        {"jsonrpc": "2.0", "id": 8, "method": "shutdown", "params": {}},
+        {"jsonrpc": "2.0", "id": 9, "method": "exit", "params": {}},
     ]
 
     stdin_data = b""
     for req in requests:
         stdin_data += encode_native_msg(req)
 
-    import os
     env = os.environ.copy()
     env["BRP_WS_ADDR"] = f"127.0.0.1:{WS_PORT}"
+    env["BRP_TOKEN_FILE"] = token_file
+    env["BRP_TOKEN_ADDR"] = f"127.0.0.1:{WS_PORT + 1}"
 
     print(f"[1] Starting Bridge (WS port={WS_PORT})...")
     proc = subprocess.Popen(
@@ -300,9 +352,18 @@ def main():
                 tests["click"] = True
                 print(f"    #{rid} click: ✅ success={resp['result'].get('success')}")
             elif rid == 5:
+                tests["hover"] = True
+                print(f"    #{rid} hover: ✅ success={resp['result'].get('success')}")
+            elif rid == 6:
+                tests["keyPress"] = True
+                print(f"    #{rid} keyPress: ✅ key={resp['result'].get('key')}")
+            elif rid == 7:
+                tests["goBack"] = True
+                print(f"    #{rid} goBack: ✅ success={resp['result'].get('success')}")
+            elif rid == 8:
                 tests["shutdown"] = True
                 print(f"    #{rid} shutdown: ✅")
-            elif rid == 6:
+            elif rid == 9:
                 tests["exit"] = True
                 print(f"    #{rid} exit: ✅")
             else:
@@ -320,7 +381,7 @@ def main():
     # Show key log lines
     log_lines = [l for l in stderr_text.strip().split("\n") if l.strip()]
     print(f"\n[5] Bridge logs ({len(log_lines)} lines):")
-    for line in log_lines[:15]:
+    for line in log_lines[:20]:
         print(f"    {line}")
 
     print("\n=== Results ===")
@@ -330,7 +391,7 @@ def main():
         status = "PASS" if ok else "FAIL"
         print(f"  {status}: {name}")
     print(f"\n  {passed}/{total} passed")
-    return 0 if passed >= 6 else 1
+    return 0 if passed >= 9 else 1
 
 if __name__ == "__main__":
     sys.exit(main())
