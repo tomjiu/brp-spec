@@ -17,136 +17,21 @@
 /// - Optional token auth (Standalone mode: BRP_AUTH_TOKEN env var or extension Options page)
 /// - Constant-time credential comparison via `subtle::ConstantTimeEq`
 
+mod auth;
 mod protocol;
+mod ratelimit;
 mod transport;
 
+use auth::*;
 use protocol::*;
+use ratelimit::*;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use futures_util::{SinkExt, StreamExt};
-use subtle::ConstantTimeEq;
-
-// ─── Configuration ───
-
-/// Maximum allowed JSON-RPC message size (bytes).
-const MAX_MESSAGE_SIZE: usize = 4 * 1024 * 1024; // 4 MB
-
-/// Maximum JSON nesting depth.
-const MAX_JSON_DEPTH: usize = 32;
-
-/// Maximum number of concurrent unauthenticated WebSocket connections.
-const MAX_UNAUTHENTICATED_CONNECTIONS: usize = 5;
-
-/// Maximum connections per second from loopback.
-const MAX_CONNECTIONS_PER_SECOND: usize = 10;
-
-/// Rate limiter state for server-side connection throttling.
-struct RateLimiter {
-    /// Timestamps of recent connection attempts (sliding window).
-    recent_connections: Vec<Instant>,
-    /// Current number of unauthenticated (pending registration) connections.
-    unauthenticated_count: usize,
-}
-
-impl RateLimiter {
-    fn new() -> Self {
-        Self {
-            recent_connections: Vec::new(),
-            unauthenticated_count: 0,
-        }
-    }
-
-    /// Check if a new connection should be accepted.
-    /// Returns Ok(()) if allowed, Err(reason) if rate-limited.
-    fn check_connection(&mut self) -> Result<(), &'static str> {
-        let now = Instant::now();
-
-        // Prune entries older than 1 second
-        self.recent_connections.retain(|t| now.duration_since(*t).as_secs_f64() < 1.0);
-
-        // Check connections per second
-        if self.recent_connections.len() >= MAX_CONNECTIONS_PER_SECOND {
-            return Err("Too many connections per second");
-        }
-
-        // Check concurrent unauthenticated connections
-        if self.unauthenticated_count >= MAX_UNAUTHENTICATED_CONNECTIONS {
-            return Err("Too many unauthenticated connections");
-        }
-
-        self.recent_connections.push(now);
-        self.unauthenticated_count += 1;
-        Ok(())
-    }
-
-    fn on_authenticated(&mut self) {
-        self.unauthenticated_count = self.unauthenticated_count.saturating_sub(1);
-    }
-
-    fn on_auth_failed(&mut self) {
-        self.unauthenticated_count = self.unauthenticated_count.saturating_sub(1);
-    }
-}
-
-// ─── Origin Validation ───
-
-/// Allowed Origin header values for WebSocket connections.
-/// In Native Messaging mode, the extension sends `Origin: null`.
-/// In regular mode, it sends `moz-extension://<extension-id>`.
-fn is_valid_origin(origin: Option<&str>) -> bool {
-    match origin {
-        // Native Messaging launched extensions send Origin: null
-        Some("null") => true,
-        // moz-extension:// origins (Firefox extension)
-        Some(o) if o.starts_with("moz-extension://") => true,
-        // chrome-extension:// origins (for future Chrome support)
-        Some(o) if o.starts_with("chrome-extension://") => true,
-        // No Origin header — could be a raw TCP client (local process)
-        // We allow this because Origin validation defends against *browser* attacks.
-        // Local processes are defended by the token/challenge.
-        None => true,
-        _ => false,
-    }
-}
-
-// ─── JSON Validation ───
-
-/// Validate JSON depth to prevent stack overflow from deeply nested structures.
-fn validate_json_depth(value: &Value, max_depth: usize) -> bool {
-    if max_depth == 0 {
-        return false;
-    }
-    match value {
-        Value::Array(arr) => {
-            if arr.len() > 1024 {
-                return false; // Array length limit
-            }
-            arr.iter().all(|v| validate_json_depth(v, max_depth - 1))
-        }
-        Value::Object(obj) => {
-            if obj.len() > 256 {
-                return false; // Object key limit
-            }
-            obj.values().all(|v| validate_json_depth(v, max_depth - 1))
-        }
-        _ => true,
-    }
-}
-
-// ─── Constant-Time Token Comparison ───
-
-/// Compare two strings in constant time to prevent timing attacks.
-fn secure_compare(a: &str, b: &str) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.as_bytes().ct_eq(b.as_bytes()).into()
-}
 
 // ─── Types ───
 
@@ -399,31 +284,6 @@ async fn run_ws_server(
     }
 }
 
-/// Custom WebSocket handshake validator that checks the Origin header.
-struct OriginValidator;
-
-impl tokio_tungstenite::tungstenite::handshake::server::Callback for OriginValidator {
-    fn on_request(
-        self,
-        request: &tokio_tungstenite::tungstenite::handshake::server::Request,
-        response: tokio_tungstenite::tungstenite::handshake::server::Response,
-    ) -> Result<tokio_tungstenite::tungstenite::handshake::server::Response, tokio_tungstenite::tungstenite::handshake::server::ErrorResponse> {
-        let origin = request.headers()
-            .get("origin")
-            .and_then(|v| v.to_str().ok());
-
-        if !is_valid_origin(origin) {
-            log::warn!("[WsServer] REJECTED Origin: {:?}", origin);
-            let err = tokio_tungstenite::tungstenite::handshake::server::ErrorResponse::new(Some(
-                "Invalid Origin".to_string()
-            ));
-            return Err(err);
-        }
-
-        Ok(response)
-    }
-}
-
 async fn handle_ext_messages(
     browser_id: &str,
     mut receiver: futures_util::stream::SplitStream<
@@ -560,16 +420,6 @@ async fn handle_request(req: Request, state: Arc<RwLock<BridgeState>>) -> Respon
 
         _ => {
             // ── Method whitelist ──
-            const ALLOWED_METHODS: &[&str] = &[
-                "tab.list", "tab.open", "tab.close", "tab.select",
-                "page.navigate", "page.getInteractionTree", "page.screenshot",
-                "page.goBack", "page.goForward", "page.reload", "page.waitForSelector",
-                "element.click", "element.type", "element.fill", "element.scroll",
-                "element.hover", "element.select", "element.getAttribute",
-                "keyboard.press",
-                "script.execute",
-            ];
-
             if !ALLOWED_METHODS.contains(&method.as_str()) {
                 return Response::error(id, ErrorResponse {
                     code: -32601,
@@ -607,10 +457,7 @@ async fn handle_request(req: Request, state: Arc<RwLock<BridgeState>>) -> Respon
 
             // ── script.execute gate (off by default) ──
             if method == "script.execute" {
-                let allowed = std::env::var("BRP_ALLOW_SCRIPT_EXECUTE")
-                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                    .unwrap_or(false);
-                if !allowed {
+                if !is_script_execute_allowed() {
                     return Response::error(id, ErrorResponse {
                         code: -32602,
                         message: "script.execute is disabled by default. Set BRP_ALLOW_SCRIPT_EXECUTE=1 to enable.".into(),

@@ -1,0 +1,95 @@
+# =============================================================================
+# BRP Project CI Workflow
+# =============================================================================
+#
+# Add this badge to your README.md:
+#
+#   [![CI](https://github.com/<OWNER>/<REPO>/actions/workflows/ci.yml/badge.svg)](https://github.com/<OWNER>/<REPO>/actions/workflows/ci.yml)
+#
+# Replace <OWNER> and <REPO> with your GitHub username and repository name.
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Rust: Format, Lint, Test, Audit, Deny
+  # ---------------------------------------------------------------------------
+  rust:
+    name: Rust CI
+    runs-on: ubuntu-latest
+    # Future: matrix with windows-latest and macos-latest
+    # strategy:
+    #   matrix:
+    #     os: [ubuntu-latest, windows-latest, macos-latest]
+    # runs-on: ${{ matrix.os }}
+
+    defaults:
+      run:
+        working-directory: bridge
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "bridge -> target"
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run clippy lints
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Run cargo-audit
+        run: cargo audit
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Run cargo-deny
+        run: cargo deny check
+
+  # ---------------------------------------------------------------------------
+  # Summary: Required checks pass if all above succeed
+  # ---------------------------------------------------------------------------
+  ci-pass:
+    name: CI Passed
+    if: always()
+    needs: [rust]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check job results
+        run: |
+          if [[ "${{ needs.rust.result }}" != "success" ]]; then
+            echo "One or more jobs failed."
+            exit 1
+          fi
+          echo "All CI jobs passed."
