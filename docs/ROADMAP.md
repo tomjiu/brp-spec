@@ -1,0 +1,88 @@
+# BRP Development Roadmap
+
+> Last updated: 2026-06-27
+> See also: [BRP_Development_Plan_v1.0.md](https://github.com/tomjiu/brp-spec/blob/main/docs/BRP_Development_Plan_v1.0.md) (comprehensive design decisions)
+
+## Legend
+
+- [x] Done
+- [~] In progress
+- [ ] Planned
+- [?] Needs investigation
+
+---
+
+## v0.3.0 — Security Hardening (baseline) ✅
+
+- [x] WebSocket Origin validation
+- [x] Server-side rate limiting (sliding window + unauth cap)
+- [x] JSON-RPC message size/depth/array/object limits
+- [x] Constant-time token comparison
+- [x] Navigation sentinel scoped to agent tabs
+- [x] Sensitive field redaction (ITree + getAttribute)
+- [x] script.execute gate (BRP_ALLOW_SCRIPT_EXECUTE=1)
+- [x] Token auto-generation (UUID v4, mandatory)
+- [x] Method whitelist (Bridge rejects unknown methods)
+- [x] Dynamic forwarding timeout
+- [x] Pending request cleanup on extension disconnect
+- [x] E2E tests (12/12 passing)
+
+## v0.3.1 — Quality Foundation ✅
+
+- [x] **C2** GitHub Actions CI (ubuntu-latest): fmt/clippy/test/audit/deny
+- [x] **C2** cargo-deny config (license whitelist, advisory DB, sources)
+- [x] **D2** Rust unit tests: auth.rs (15 tests) + ratelimit.rs (7 tests) = 22 total
+- [x] **C3** Modularization: auth.rs + ratelimit.rs extracted, main.rs 943→790 lines
+- [x] **B1 RFC** Chapters 1-3: lifecycle model, IPC discovery, threat model
+- [x] **B1 Spike** Dual-mode binary, tokio native IPC (Unix Socket + Windows Named Pipe)
+- [x] PR #5 merged to main
+
+## v0.3.1-patch — Extension Tests + RFC Expansion [ ]
+
+- [ ] **D1** background.js: extract pure functions (message routing, state machine) from `browser` globals
+- [ ] **D1** itree.js / content.js: Vitest + happy-dom unit tests
+- [ ] **D1** Cover the async listener bug that leaked to v0.3.0 production
+- [ ] **B1 RFC** §4 Installation & Distribution (install.sh, --install, manifest paths)
+- [ ] **B1 RFC** §5 Token Bootstrap Protocol (IPC message format, one-time vs reuse)
+
+## v0.3.2 — B1 RFC Finalization [ ]
+
+- [ ] **B1 RFC** §6 Extension-Side Implementation (connectNative timing, supportsAutoLink)
+- [ ] **B1 RFC** §7 Crash Recovery & Reconnection (browserId, heartbeat, exponential backoff)
+- [ ] **B1 RFC** §8 Multi-Browser Support (Firefox + Zen manifest coexistence)
+- [ ] **B1 Spike** Stale socket/lockfile cleanup: automated test (bridge crash → bootstrap detects → cleans)
+- [ ] **B1 Spike** Windows PID liveness check (OpenProcess + GetExitCodeProcess)
+- [ ] **B1 Spike** Cross-platform validation (Linux + macOS + Windows)
+- [ ] install.sh / install.ps1 draft
+
+## v0.4.0-alpha — TypeScript Migration (pure refactor, zero new features) [ ]
+
+- [ ] **C1** background.js → TypeScript
+- [ ] **C1** ts-rs: auto-generate TS types from Rust structs
+- [ ] **C1** Enforce `#[serde(tag = "type", content = "data")]` on all wire types
+- [ ] **C1** esbuild for extension build pipeline
+- [ ] **C3** Complete modularization: ws_server.rs / native_msg.rs / router.rs / config.rs
+
+## v0.4.0 — B1 Implementation + Stability [ ]
+
+- [ ] **B1** Bridge --mode=bridge / --mode=bootstrap
+- [ ] **B1** IPC (interprocess or tokio native): Unix Socket + Named Pipe
+- [ ] **B1** PID lockfile + stale cleanup + MRU selection
+- [ ] **B1** Windows Named Pipe ACL (DACL restricting to current user)
+- [ ] **B1** Extension connectNative + stdout token read + WS connect
+- [ ] **B1** supportsAutoLink capability in initialize response
+- [ ] **E3** DOM Precondition validation (tagName, textContains, attributes)
+- [ ] **E4** Context Recovery Pipeline (selector fallback chain, acceptFallback opt-in)
+
+## v0.4.x — Real Extension Integration Tests [ ]
+
+- [ ] **D1** web-ext + headless Firefox: full flow (connect → navigate → ITree → click)
+- [ ] Fixed test pages (local SPA), retry mechanism
+
+## v0.5.0+ — Defense in Depth [ ]
+
+- [ ] **E1** Permission gating (confirm dialogs for navigation, form submit, script.execute)
+- [ ] **E2** Domain blacklist (user-configurable, wildcard support)
+- [ ] **E5** Screenshot permission gate, log sanitization, CSP hardening
+- [ ] **B2** Multi-token (per-client tokens, independent revocation)
+- [ ] **C4** Python adapter: merge into Bridge or keep separate (decide based on ecosystem)
