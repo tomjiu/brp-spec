@@ -134,16 +134,6 @@ impl tokio_tungstenite::tungstenite::handshake::server::Callback for OriginValid
     }
 }
 
-// ─── script.execute Gate ───
-
-/// Returns `true` if the `BRP_ALLOW_SCRIPT_EXECUTE` environment variable is
-/// set to `1` or `true` (case-insensitive).
-pub fn is_script_execute_allowed() -> bool {
-    std::env::var("BRP_ALLOW_SCRIPT_EXECUTE")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-}
-
 // ─── Tests ───
 
 #[cfg(test)]

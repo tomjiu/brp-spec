@@ -2,12 +2,19 @@
   "name": "brp-extension",
   "version": "0.3.0",
   "private": true,
-  "description": "BRP Firefox Extension - test infrastructure",
+  "description": "BRP Firefox Extension",
   "scripts": {
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.content.json",
+    "typecheck:bg": "tsc --noEmit",
+    "typecheck:content": "tsc --noEmit -p tsconfig.content.json",
+    "build": "node esbuild.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "devDependencies": {
+    "@types/firefox-webext-browser": "^143.0.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3",
     "vitest": "^3.2.4"
   }
 }

@@ -11,13 +11,21 @@
     "<all_urls>"
   ],
   "background": {
-    "scripts": ["background/handlers.js", "background/background.js"],
+    "scripts": [
+      "dist/handlers.js",
+      "dist/background.js"
+    ],
     "persistent": true
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content/itree.js", "content/content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "dist/itree.js",
+        "dist/content.js"
+      ],
       "run_at": "document_idle"
     }
   ],

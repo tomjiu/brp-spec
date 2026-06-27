@@ -10,7 +10,6 @@
 /// Reference: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Native_messaging
 use serde_json::Value;
 use std::io::{self, Read, Write};
-use tokio::sync::mpsc;
 
 /// Read a single native message from stdin (blocking)
 pub fn read_native_message() -> io::Result<Option<Value>> {
@@ -70,35 +69,6 @@ pub fn write_native_message(msg: &Value) -> io::Result<()> {
     handle.flush()?;
 
     Ok(())
-}
-
-/// Async wrapper: spawns a blocking reader thread and sends messages via channel
-pub fn spawn_native_reader() -> mpsc::Receiver<Value> {
-    let (tx, rx) = mpsc::channel(64);
-
-    std::thread::spawn(move || {
-        log::info!("[NativeReader] Listening on stdin...");
-        loop {
-            match read_native_message() {
-                Ok(Some(msg)) => {
-                    if tx.blocking_send(msg).is_err() {
-                        log::error!("[NativeReader] Channel closed, stopping");
-                        break;
-                    }
-                }
-                Ok(None) => {
-                    log::info!("[NativeReader] EOF on stdin, browser disconnected");
-                    break;
-                }
-                Err(e) => {
-                    log::error!("[NativeReader] Read error: {}", e);
-                    break;
-                }
-            }
-        }
-    });
-
-    rx
 }
 
 /// Async wrapper for writing native messages
