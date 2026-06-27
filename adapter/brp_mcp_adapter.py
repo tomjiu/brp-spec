@@ -37,6 +37,7 @@ _request_id = 0
 _pending: dict[int, asyncio.Future] = {}
 _initialized = False
 _reader_task: Optional[asyncio.Task] = None
+_bridge_auth_token: Optional[str] = None  # Captured from Bridge's authToken notification
 
 
 async def ensure_bridge(bridge_path: str, ws_addr: str):
@@ -85,7 +86,14 @@ async def _read_bridge_stdout():
 
             # Notification
             method = msg.get("method", "")
-            if method.startswith("notification/"):
+            if method == "notification/bridge.authToken":
+                global _bridge_auth_token
+                params = msg.get("params", {})
+                _bridge_auth_token = params.get("token")
+                token_file = params.get("tokenFile", "")
+                log.info("Bridge auth token received (file: %s)", token_file)
+                log.info("Configure this token in the Extension Options page for authentication")
+            elif method.startswith("notification/"):
                 log.info("BRP notification: %s", method)
             else:
                 log.debug("Unhandled bridge message: %s", msg)

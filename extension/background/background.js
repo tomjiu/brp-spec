@@ -18,6 +18,10 @@
   let reconnectTimer = null;
   let authenticated = false;
 
+  // Track which tabs the agent has interacted with (opened, navigated, etc.)
+  // Navigation sentinel only applies to these tabs — user's own browsing is untouched.
+  const agentTabIds = new Set();
+
   // ─── Auth Token ───
 
   /**
@@ -348,6 +352,7 @@
       url,
       active: params?.active !== false,
     });
+    agentTabIds.add(tab.id); // Mark as agent-controlled
     return { tabId: tab.id, windowId: tab.windowId, url: tab.url };
   }
 
@@ -382,6 +387,7 @@
     const tabErr = validateTabId(tabId);
     if (tabErr) throw new Error(tabErr);
 
+    agentTabIds.add(tabId); // Mark as agent-controlled
     await browser.tabs.update(tabId, { url });
     await waitForNavigation(tabId, 15000);
     return { uri: url };
@@ -573,6 +579,10 @@
    *   - Any other indirect navigation (not just page.navigate)
    */
   browser.webNavigation.onBeforeNavigate.addListener((details) => {
+    // Only enforce on tabs the agent has interacted with.
+    // User's own browsing (file:// PDFs, blob: URLs, etc.) is untouched.
+    if (!agentTabIds.has(details.tabId)) return;
+
     const url = details.url;
     if (!url) return;
 

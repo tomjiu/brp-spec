@@ -194,11 +194,27 @@
       const inputType = (el.type || "text").toLowerCase();
       const autocomplete = el.getAttribute("autocomplete") || "";
 
+      // Keywords that indicate a sensitive field (checked against name, id, placeholder)
+      const SENSITIVE_KEYWORDS = [
+        "password", "passwd", "secret", "cvv", "csc", "ccv",
+        "ssn", "otp", "pin", "creditcard", "credit-card", "cc-number",
+        "cardnumber", "securitycode", "verification",
+      ];
+
+      const nameIdPlaceholder = [
+        el.name || "",
+        el.id || "",
+        el.placeholder || "",
+      ].join(" ").toLowerCase();
+
+      const keywordMatch = SENSITIVE_KEYWORDS.some(kw => nameIdPlaceholder.includes(kw));
+
       // Redact sensitive values
       const isSensitive =
         inputType === "password" ||
         inputType === "hidden" ||
-        ["current-password", "new-password", "cc-number", "cc-csc"].includes(autocomplete);
+        ["current-password", "new-password", "cc-number", "cc-csc"].includes(autocomplete) ||
+        keywordMatch;
 
       if (isSensitive) {
         node.value = "[REDACTED]";

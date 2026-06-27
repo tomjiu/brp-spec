@@ -9,7 +9,7 @@
   const itree = window.__BRP_ITREE__;
 
   // Listen for messages from background
-  browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  browser.runtime.onMessage.addListener(async (msg, sender, sendResponse) => {
     try {
       let result;
 
@@ -301,6 +301,20 @@
     // Elements with autocomplete indicating sensitive data
     const autocomplete = el.getAttribute("autocomplete") || "";
     if (["current-password", "new-password", "cc-number", "cc-csc"].includes(autocomplete)) {
+      return true;
+    }
+    // Keywords in name/id/placeholder that indicate sensitive data
+    const SENSITIVE_KEYWORDS = [
+      "password", "passwd", "secret", "cvv", "csc", "ccv",
+      "ssn", "otp", "pin", "creditcard", "credit-card", "cc-number",
+      "cardnumber", "securitycode", "verification",
+    ];
+    const nameIdPlaceholder = [
+      el.name || "",
+      el.id || "",
+      el.getAttribute("placeholder") || "",
+    ].join(" ").toLowerCase();
+    if (SENSITIVE_KEYWORDS.some(kw => nameIdPlaceholder.includes(kw))) {
       return true;
     }
     return false;

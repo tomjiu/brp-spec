@@ -208,7 +208,7 @@ impl BridgeState {
 
 async fn run_ws_server(
     addr: &str,
-    auth_token: Option<Arc<String>>,
+    auth_token: Arc<String>,
     state: Arc<RwLock<BridgeState>>,
     notify_tx: mpsc::Sender<Value>,
 ) {
@@ -221,11 +221,7 @@ async fn run_ws_server(
     };
 
     log::info!("[WsServer] Listening on {} for Firefox Extension...", addr);
-    if auth_token.is_some() {
-        log::info!("[WsServer] Token authentication ENABLED");
-    } else {
-        log::info!("[WsServer] Token authentication DISABLED (relying on Origin validation)");
-    }
+    log::info!("[WsServer] Token authentication ENABLED (mandatory)");
 
     let rate_limiter = Arc::new(Mutex::new(RateLimiter::new()));
 
@@ -286,27 +282,25 @@ async fn run_ws_server(
                                             }
 
                                             if v.get("method").and_then(|m| m.as_str()) == Some("register") {
-                                                // ── Token validation (if configured) ──
-                                                if let Some(ref expected_token) = auth_token {
-                                                    let provided_token = v.get("params")
-                                                        .and_then(|p| p.get("token"))
-                                                        .and_then(|t| t.as_str())
-                                                        .unwrap_or("");
+                                                // ── Token validation (always required) ──
+                                                let provided_token = v.get("params")
+                                                    .and_then(|p| p.get("token"))
+                                                    .and_then(|t| t.as_str())
+                                                    .unwrap_or("");
 
-                                                    if !secure_compare(provided_token, expected_token) {
-                                                        log::warn!("[WsServer] AUTH FAILED from {} (token mismatch)", peer);
-                                                        let err_msg = json!({
-                                                            "jsonrpc": "2.0",
-                                                            "error": {
-                                                                "code": -32001,
-                                                                "message": "Authentication failed: invalid token"
-                                                            }
-                                                        });
-                                                        let _ = tx.send(WsMessage::Text(err_msg.to_string().into())).await;
-                                                        let _ = tx.send(WsMessage::Close(None)).await;
-                                                        rate_limiter.lock().await.on_auth_failed();
-                                                        return;
-                                                    }
+                                                if !secure_compare(provided_token, &auth_token) {
+                                                    log::warn!("[WsServer] AUTH FAILED from {} (token mismatch)", peer);
+                                                    let err_msg = json!({
+                                                        "jsonrpc": "2.0",
+                                                        "error": {
+                                                            "code": -32001,
+                                                            "message": "Authentication failed: invalid token"
+                                                        }
+                                                    });
+                                                    let _ = tx.send(WsMessage::Text(err_msg.to_string().into())).await;
+                                                    let _ = tx.send(WsMessage::Close(None)).await;
+                                                    rate_limiter.lock().await.on_auth_failed();
+                                                    return;
                                                 }
 
                                                 let bid = v.get("params")
@@ -766,19 +760,63 @@ async fn main() {
 
     let state = Arc::new(RwLock::new(BridgeState::new()));
 
-    // ── Auth Token (optional) ──
-    // For Standalone mode: set BRP_AUTH_TOKEN env var.
-    // For NM mode: token is optional (Origin validation is the primary defense).
-    // If not set, the Bridge relies on Origin validation only.
-    let auth_token: Option<Arc<String>> = std::env::var("BRP_AUTH_TOKEN")
-        .ok()
-        .filter(|t| !t.is_empty())
-        .map(Arc::new);
+    // ── Auth Token (always generated, always required) ──
+    // The Bridge always generates a random token at startup.
+    // If BRP_AUTH_TOKEN is set, use that instead (user override).
+    // Token is written to a file (0600) and sent to the adapter via stdout.
+    // This defends against local process attacks (the second column of the threat model).
+    let auth_token: Arc<String> = Arc::new(
+        std::env::var("BRP_AUTH_TOKEN")
+            .ok()
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| {
+                let token = uuid::Uuid::new_v4().to_string();
+                // Write token to file with restricted permissions
+                let path = token_file_path();
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let tmp_path = path.with_extension("tmp");
+                if let Err(e) = (|| -> std::io::Result<()> {
+                    use std::io::Write;
+                    let mut f = std::fs::File::create(&tmp_path)?;
+                    f.write_all(token.as_bytes())?;
+                    f.sync_all()?;
+                    std::fs::rename(&tmp_path, &path)?;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+                    }
+                    Ok(())
+                })() {
+                    log::warn!("[Auth] Failed to write token file: {}", e);
+                } else {
+                    log::info!("[Auth] Token written to {}", path.display());
+                }
+                log::info!("[Auth] Auto-generated token: configure in Extension Options page");
+                token
+            })
+    );
 
-    if auth_token.is_some() {
-        log::info!("[Auth] Token authentication enabled (from BRP_AUTH_TOKEN)");
-    } else {
-        log::info!("[Auth] No token configured — using Origin validation only");
+    log::info!("[Auth] Token authentication ENABLED (mandatory)");
+
+    // Cross-platform token file location.
+    fn token_file_path() -> std::path::PathBuf {
+        if let Ok(p) = std::env::var("BRP_TOKEN_FILE") {
+            return std::path::PathBuf::from(p);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(appdata) = std::env::var("APPDATA") {
+                return std::path::PathBuf::from(appdata).join("brp-bridge").join("token");
+            }
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            std::path::PathBuf::from(home).join(".brp-bridge-token")
+        } else {
+            std::env::temp_dir().join("brp-bridge-token")
+        }
     }
 
     // ── Channels ──
@@ -866,6 +904,22 @@ async fn main() {
             }
         }
     });
+
+    // ── Send auth token to adapter via stdout ──
+    // The MCP adapter reads this notification and can relay the token.
+    // Token file path is included so the adapter can verify or display it.
+    {
+        let token_notification = json!({
+            "jsonrpc": "2.0",
+            "method": "notification/bridge.authToken",
+            "params": {
+                "token": auth_token.as_str(),
+                "tokenFile": token_file_path().to_string_lossy(),
+                "message": "Configure this token in the Extension Options page for authentication"
+            }
+        });
+        let _ = notify_tx.send(token_notification).await;
+    }
 
     // ── Main Request Loop ──
     while let Some(req) = request_rx.recv().await {
