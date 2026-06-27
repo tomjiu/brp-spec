@@ -141,7 +141,32 @@
    * Build an ITree node from a DOM element
    */
   function buildNode(el, depth) {
-    if (!isInteractive(el)) return null;
+    if (!el || el.nodeType !== 1) return null;
+
+    const interactive = isInteractive(el);
+
+    // Build children first — always recurse regardless of parent interactivity
+    const children = [];
+    for (const child of el.children) {
+      const childNode = buildNode(child, depth + 1);
+      if (childNode) children.push(childNode);
+    }
+
+    // Non-interactive element: return children directly (no wrapper node)
+    if (!interactive) {
+      if (children.length === 0) return null;
+      if (children.length === 1) return children[0];
+      // Multiple children: wrap in a generic container
+      return {
+        nodeId: `node_${++nodeIdCounter}`,
+        role: "generic",
+        name: "",
+        tag: el.tagName.toLowerCase(),
+        visible: true,
+        bounds: { x: 0, y: 0, width: 0, height: 0 },
+        children
+      };
+    }
 
     const nodeId = `node_${++nodeIdCounter}`;
     nodeMap.set(nodeId, el);
@@ -187,12 +212,7 @@
       node.inputType = el.type || "text";
     }
 
-    // Build children
-    const children = [];
-    for (const child of el.children) {
-      const childNode = buildNode(child, depth + 1);
-      if (childNode) children.push(childNode);
-    }
+    // Attach already-built children
     if (children.length > 0) {
       node.children = children;
     }
