@@ -104,7 +104,7 @@ async def _send_to_bridge(msg: dict):
     await _bridge_proc.stdin.drain()
 
 
-async def brp_request(method: str, params: dict = None) -> dict:
+async def brp_request(method: str, params: dict = None, browser_id: str = None) -> dict:
     """Send a JSON-RPC request to BRP Bridge and wait for response."""
     global _request_id
 
@@ -114,11 +114,15 @@ async def brp_request(method: str, params: dict = None) -> dict:
     _request_id += 1
     req_id = _request_id
 
+    p = params or {}
+    if browser_id:
+        p["browserId"] = browser_id
+
     msg = {
         "jsonrpc": "2.0",
         "id": req_id,
         "method": method,
-        "params": params or {},
+        "params": p,
     }
 
     loop = asyncio.get_event_loop()
@@ -149,13 +153,16 @@ async def ensure_initialized():
 
     result = await brp_request("initialize", {
         "protocolVersion": "0.1.0",
-        "clientInfo": {"name": "brp-mcp-adapter", "version": "0.1.0"},
+        "clientInfo": {"name": "brp-mcp-adapter", "version": "0.2.0"},
         "capabilities": {
             "features": ["interactionTree", "events", "screenshot"],
             "actions": [
                 "page.navigate", "page.getInteractionTree", "page.screenshot",
+                "page.goBack", "page.goForward", "page.reload", "page.waitForSelector",
                 "tab.list", "tab.open", "tab.close", "tab.select",
                 "element.click", "element.type", "element.fill", "element.scroll",
+                "element.hover", "element.select", "element.getAttribute",
+                "keyboard.press",
                 "script.execute",
             ],
         },
@@ -182,68 +189,85 @@ async def _ready():
 
 
 @mcp_server.tool()
-async def brp_tab_list() -> str:
-    """List all open browser tabs with their IDs, titles, and URLs."""
+async def brp_browser_list() -> str:
+    """List all browsers connected to the BRP Bridge (e.g. firefox, zen)."""
     await _ready()
-    result = await brp_request("tab.list")
+    result = await brp_request("browser.list")
+    browsers = result.get("browsers", [])
+    if not browsers:
+        return "No browsers connected"
+    lines = []
+    for b in browsers:
+        bid = b.get("browserId", "?")
+        ua = b.get("userAgent", "")
+        ver = b.get("extensionVersion", "")
+        lines.append(f"Browser: {bid} (extension v{ver})" + (f" — {ua[:60]}" if ua else ""))
+    return "\n".join(lines)
+
+
+@mcp_server.tool()
+async def brp_tab_list(browser_id: str = None) -> str:
+    """List all open browser tabs with their IDs, titles, and URLs. Optionally target a specific browser by browser_id (e.g. 'firefox', 'zen')."""
+    await _ready()
+    result = await brp_request("tab.list", browser_id=browser_id)
     tabs = result.get("tabs", [])
     lines = [f"Tab {t['tabId']}: {t.get('title', '?')} — {t.get('url', '?')}" + (" (active)" if t.get("active") else "") for t in tabs]
     return "\n".join(lines) if lines else "No tabs open"
 
 
 @mcp_server.tool()
-async def brp_tab_open(url: str) -> str:
-    """Open a new browser tab at the given URL."""
+async def brp_tab_open(url: str, browser_id: str = None) -> str:
+    """Open a new browser tab at the given URL. Optionally target a specific browser by browser_id."""
     await _ready()
-    result = await brp_request("tab.open", {"url": url})
+    result = await brp_request("tab.open", {"url": url}, browser_id=browser_id)
     return f"Opened tab {result.get('tabId', '?')} at {url}"
 
 
 @mcp_server.tool()
-async def brp_tab_close(tab_id: int = None) -> str:
-    """Close a browser tab by ID. Closes active tab if no ID given."""
+async def brp_tab_close(tab_id: int = None, browser_id: str = None) -> str:
+    """Close a browser tab by ID. Closes active tab if no ID given. Optionally target a specific browser."""
     await _ready()
     params = {}
     if tab_id is not None:
         params["tabId"] = tab_id
-    await brp_request("tab.close", params)
+    await brp_request("tab.close", params, browser_id=browser_id)
     return f"Closed tab {tab_id or 'active'}"
 
 
 @mcp_server.tool()
-async def brp_tab_select(tab_id: int = None, page_idx: int = None) -> str:
-    """Switch to a browser tab by ID or index."""
+async def brp_tab_select(tab_id: int = None, page_idx: int = None, browser_id: str = None) -> str:
+    """Switch to a browser tab by ID or index. Optionally target a specific browser."""
     await _ready()
     params = {}
     if tab_id is not None:
         params["tabId"] = tab_id
     elif page_idx is not None:
         params["pageIdx"] = page_idx
-    result = await brp_request("tab.select", params)
+    result = await brp_request("tab.select", params, browser_id=browser_id)
     return f"Selected tab: {result.get('title', '?')} — {result.get('url', '?')}"
 
 
 @mcp_server.tool()
-async def brp_navigate(url: str) -> str:
-    """Navigate the active tab to a URL."""
+async def brp_navigate(url: str, browser_id: str = None) -> str:
+    """Navigate the active tab to a URL. Optionally target a specific browser."""
     await _ready()
-    await brp_request("page.navigate", {"url": url})
+    await brp_request("page.navigate", {"url": url}, browser_id=browser_id)
     return f"Navigated to {url}"
 
 
 @mcp_server.tool()
-async def brp_snapshot() -> str:
-    """Get the Interaction Tree (ITree) of the current page — a structured representation of interactive elements with roles, names, and nodeIds."""
+async def brp_snapshot(browser_id: str = None) -> str:
+    """Get the Interaction Tree (ITree) of the current page. Optionally target a specific browser."""
     await _ready()
-    result = await brp_request("page.getInteractionTree")
+    result = await brp_request("page.getInteractionTree", browser_id=browser_id)
     return _format_itree(result)
 
 
 @mcp_server.tool()
-async def brp_screenshot() -> str:
-    """Take a screenshot of the visible area of the active tab. Returns info about the captured image."""
+async def brp_screenshot(browser_id: str = None) -> str:
+    """Take a screenshot of the visible area of the active tab. Optionally target a specific browser."""
     await _ready()
-    result = await brp_request("page.screenshot")
+    result = await brp_request("page.screenshot", browser_id=browser_id)
     data_url = result.get("dataUrl", "")
     if data_url.startswith("data:image/png;base64,"):
         return f"Screenshot captured (base64 PNG, {len(data_url)} chars)"
@@ -251,59 +275,145 @@ async def brp_screenshot() -> str:
 
 
 @mcp_server.tool()
-async def brp_click(selector: str, selector_type: str = "css") -> str:
-    """Click an element on the page. Selector types: css, xpath, text, nodeId."""
+async def brp_click(selector: str, selector_type: str = "css", browser_id: str = None) -> str:
+    """Click an element on the page. Selector types: css, xpath, text, nodeId. Optionally target a specific browser."""
     await _ready()
     sel = {"type": selector_type, "value": selector}
-    result = await brp_request("element.click", {"selector": sel})
+    result = await brp_request("element.click", {"selector": sel}, browser_id=browser_id)
     if result.get("success"):
         return f"Clicked element ({selector_type}: {selector})"
     return f"Click failed: {result.get('error', 'unknown')}"
 
 
 @mcp_server.tool()
-async def brp_type(selector: str, text: str, selector_type: str = "css") -> str:
-    """Type text into an element character by character (simulates keyboard)."""
+async def brp_type(selector: str, text: str, selector_type: str = "css", browser_id: str = None) -> str:
+    """Type text into an element character by character (simulates keyboard). Optionally target a specific browser."""
     await _ready()
     sel = {"type": selector_type, "value": selector}
-    result = await brp_request("element.type", {"selector": sel, "text": text})
+    result = await brp_request("element.type", {"selector": sel, "text": text}, browser_id=browser_id)
     if result.get("success"):
         return f"Typed {result.get('typed', len(text))} chars into ({selector_type}: {selector})"
     return f"Type failed: {result.get('error', 'unknown')}"
 
 
 @mcp_server.tool()
-async def brp_fill(selector: str, text: str, selector_type: str = "css") -> str:
-    """Fill an input element directly (sets value without simulating keystrokes)."""
+async def brp_fill(selector: str, text: str, selector_type: str = "css", browser_id: str = None) -> str:
+    """Fill an input element directly (sets value without simulating keystrokes). Optionally target a specific browser."""
     await _ready()
     sel = {"type": selector_type, "value": selector}
-    result = await brp_request("element.fill", {"selector": sel, "text": text})
+    result = await brp_request("element.fill", {"selector": sel, "text": text}, browser_id=browser_id)
     if result.get("success"):
         return f"Filled {result.get('filled', len(text))} chars into ({selector_type}: {selector})"
     return f"Fill failed: {result.get('error', 'unknown')}"
 
 
 @mcp_server.tool()
-async def brp_scroll(selector: str = None, selector_type: str = "css") -> str:
-    """Scroll an element into view. If no selector, scrolls to top of page."""
+async def brp_scroll(selector: str = None, selector_type: str = "css", browser_id: str = None) -> str:
+    """Scroll an element into view. If no selector, scrolls to top of page. Optionally target a specific browser."""
     await _ready()
     params = {}
     if selector:
         params["selector"] = {"type": selector_type, "value": selector}
-    result = await brp_request("element.scroll", params)
+    result = await brp_request("element.scroll", params, browser_id=browser_id)
     if result.get("success"):
         return "Scrolled element into view"
     return f"Scroll result: {json.dumps(result)}"
 
 
 @mcp_server.tool()
-async def brp_execute(code: str) -> str:
-    """Execute JavaScript code in the active page context and return the result."""
+async def brp_execute(code: str, browser_id: str = None) -> str:
+    """Execute JavaScript code in the active page context and return the result. Optionally target a specific browser."""
     await _ready()
-    result = await brp_request("script.execute", {"code": code})
+    result = await brp_request("script.execute", {"code": code}, browser_id=browser_id)
     if result.get("success"):
         return f"Script result: {json.dumps(result.get('result'), ensure_ascii=False)}"
     return f"Script error: {result.get('error', 'unknown')}"
+
+
+@mcp_server.tool()
+async def brp_hover(selector: str, selector_type: str = "css", browser_id: str = None) -> str:
+    """Hover the mouse over an element. Optionally target a specific browser."""
+    await _ready()
+    sel = {"type": selector_type, "value": selector}
+    result = await brp_request("element.hover", {"selector": sel}, browser_id=browser_id)
+    if result.get("success"):
+        return f"Hovered over element ({selector_type}: {selector})"
+    return f"Hover failed: {result.get('error', 'unknown')}"
+
+
+@mcp_server.tool()
+async def brp_select(selector: str, value: str, selector_type: str = "css", browser_id: str = None) -> str:
+    """Select an option in a <select> dropdown by value or visible text. Optionally target a specific browser."""
+    await _ready()
+    sel = {"type": selector_type, "value": selector}
+    result = await brp_request("element.select", {"selector": sel, "value": value}, browser_id=browser_id)
+    if result.get("success"):
+        return f"Selected {result.get('selected', 1)} option(s)"
+    return f"Select failed: {result.get('error', 'unknown')}"
+
+
+@mcp_server.tool()
+async def brp_get_attribute(selector: str, attribute: str, selector_type: str = "css", browser_id: str = None) -> str:
+    """Get an attribute or property value from an element. Supports: href, class, id, value, textContent, innerHTML, checked, disabled, etc. Optionally target a specific browser."""
+    await _ready()
+    sel = {"type": selector_type, "value": selector}
+    result = await brp_request("element.getAttribute", {"selector": sel, "attribute": attribute}, browser_id=browser_id)
+    if result.get("success"):
+        return f"{attribute} = {json.dumps(result.get('value'), ensure_ascii=False)}"
+    return f"GetAttribute failed: {result.get('error', 'unknown')}"
+
+
+@mcp_server.tool()
+async def brp_key_press(key: str, selector: str = None, selector_type: str = "css", browser_id: str = None) -> str:
+    """Press a key or key combination (e.g. 'Enter', 'Control+a', 'Alt+F4', 'Shift+Tab'). Targets the focused element by default, or specify a selector. Optionally target a specific browser."""
+    await _ready()
+    params = {"key": key}
+    if selector:
+        params["selector"] = {"type": selector_type, "value": selector}
+    result = await brp_request("keyboard.press", params, browser_id=browser_id)
+    if result.get("success"):
+        return f"Pressed: {key}"
+    return f"Key press failed: {result.get('error', 'unknown')}"
+
+
+@mcp_server.tool()
+async def brp_go_back(browser_id: str = None) -> str:
+    """Navigate back in browser history. Optionally target a specific browser."""
+    await _ready()
+    result = await brp_request("page.goBack", browser_id=browser_id)
+    if result.get("success"):
+        return "Navigated back"
+    return f"Go back result: {json.dumps(result)}"
+
+
+@mcp_server.tool()
+async def brp_go_forward(browser_id: str = None) -> str:
+    """Navigate forward in browser history. Optionally target a specific browser."""
+    await _ready()
+    result = await brp_request("page.goForward", browser_id=browser_id)
+    if result.get("success"):
+        return "Navigated forward"
+    return f"Go forward result: {json.dumps(result)}"
+
+
+@mcp_server.tool()
+async def brp_reload(browser_id: str = None) -> str:
+    """Reload the current page. Optionally target a specific browser."""
+    await _ready()
+    result = await brp_request("page.reload", browser_id=browser_id)
+    if result.get("success"):
+        return "Page reloaded"
+    return f"Reload result: {json.dumps(result)}"
+
+
+@mcp_server.tool()
+async def brp_wait_for_selector(css: str, timeout: int = 10000, browser_id: str = None) -> str:
+    """Wait for an element matching a CSS selector to appear in the DOM. Default timeout is 10000ms. Optionally target a specific browser."""
+    await _ready()
+    result = await brp_request("page.waitForSelector", {"css": css, "timeout": timeout}, browser_id=browser_id)
+    if result.get("success") and result.get("found"):
+        return f"Element found: {css}"
+    return f"Wait result: {result.get('error', 'not found')}"
 
 
 def _format_itree(data: dict) -> str:

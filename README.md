@@ -139,6 +139,7 @@ The Bridge implements BRP RFC0001 (Draft). Key features:
 |--------|-------------|
 | `initialize` | Negotiate session, version, capabilities |
 | `shutdown` / `exit` | Clean session termination |
+| `browser.list` | List all connected browsers |
 | `tab.list` | List all open tabs |
 | `tab.open` | Open new tab at URL |
 | `tab.close` | Close a tab |
@@ -146,10 +147,18 @@ The Bridge implements BRP RFC0001 (Draft). Key features:
 | `page.navigate` | Navigate to URL |
 | `page.getInteractionTree` | Get structured Interaction Tree |
 | `page.screenshot` | Capture visible tab screenshot |
+| `page.goBack` | Navigate back in history |
+| `page.goForward` | Navigate forward in history |
+| `page.reload` | Reload the current page |
+| `page.waitForSelector` | Wait for a CSS selector to appear |
 | `element.click` | Click an element |
 | `element.type` | Type text character by character |
 | `element.fill` | Set input value directly |
 | `element.scroll` | Scroll an element into view |
+| `element.hover` | Hover mouse over an element |
+| `element.select` | Select option in a dropdown |
+| `element.getAttribute` | Get an attribute or property value |
+| `keyboard.press` | Press a key or key combination |
 | `script.execute` | Execute JavaScript in page context |
 
 ### Notifications
@@ -165,7 +174,30 @@ The Bridge implements BRP RFC0001 (Draft). Key features:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BRP_WS_ADDR` | `127.0.0.1:9817` | WebSocket server address for Extension |
+| `BRP_TOKEN_ADDR` | `127.0.0.1:9818` | HTTP server address for auth token (WS port + 1) |
+| `BRP_TOKEN_FILE` | Platform-specific | Path to write auth token file |
+| `BRP_STANDALONE` | `0` | Set to `1` to run Bridge as pure WS server (no stdin/stdout) |
 | `RUST_LOG` | `info` | Log level (error/warn/info/debug/trace) |
+
+## Security
+
+- **Token Authentication**: The Bridge generates a UUID v4 token on startup, writes it to a platform-specific file path, and serves it via a local HTTP endpoint. The Extension fetches the token and includes it in the registration handshake. Connections without a valid token are rejected.
+- **Token File Locations**:
+  - Windows: `%APPDATA%\brp-bridge\token`
+  - Linux/macOS: `~/.brp-bridge-token`
+  - Override with `BRP_TOKEN_FILE` environment variable
+- **Restricted Pages**: Content scripts cannot be injected into `about:*`, `chrome:*`, `moz-extension:*`, and similar restricted pages. The Extension detects this and returns a `BRP_RESTRICTED_PAGE` error.
+- **Script Execution**: `script.execute` uses `new Function()` instead of `eval()` for better isolation, with a 1MB size limit.
+
+## Multi-Browser Support
+
+Multiple browsers (Firefox, Zen) can connect to the same Bridge simultaneously. Each browser registers with a unique `browserId` (auto-detected). Requests can target a specific browser by including a `browserId` parameter:
+
+```json
+{"jsonrpc": "2.0", "id": 1, "method": "tab.list", "params": {"browserId": "zen"}}
+```
+
+Use `browser.list` to see all connected browsers.
 
 ## Development
 
