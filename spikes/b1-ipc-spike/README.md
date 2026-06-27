@@ -30,11 +30,25 @@ cargo run -- --mode=bootstrap
 
 The bootstrap will:
 1. Scan lockfiles in `/tmp/brp-spike-instances/`
-2. Verify PIDs are alive (unix) or skip check (windows)
-3. Select the most recently started bridge
-4. Connect and send a `request_token` message
-5. Print the received token to stderr
-6. Write the token in **Native Messaging format** (4-byte LE length + JSON) to stdout
+2. Verify PIDs are alive (unix: `kill(pid, 0)`, windows: `OpenProcess` + `GetExitCodeProcess`)
+3. Clean up stale lockfiles (dead PIDs) automatically
+4. Select the most recently started bridge
+5. Connect and send a `request_token` message
+6. Print the received token to stderr
+7. Write the token in **Native Messaging format** (4-byte LE length + JSON) to stdout
+
+### Stale cleanup test
+
+```bash
+cargo run -- --mode=stale-test
+```
+
+Automated test that verifies stale lockfile cleanup works correctly:
+1. Creates a fake lockfile with a known-dead PID (99999)
+2. Runs the discovery logic (scan lockfiles, verify PIDs, clean stale entries)
+3. Verifies the stale lockfile was deleted
+4. Verifies the dead PID is excluded from live candidates
+5. Prints PASS/FAIL results to stderr (exit code 0 on pass, 1 on fail)
 
 ## Platform notes
 
@@ -48,8 +62,9 @@ PID liveness is verified with `libc::kill(pid, 0)`.
 
 IPC path: `\\.\pipe\brp-bridge-spike-<uuid>`
 
-PID liveness check is skipped (always assumed alive) — the connection attempt
-itself serves as the liveness probe for this spike.
+PID liveness is verified via `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` +
+`GetExitCodeProcess` (checking for `STILL_ACTIVE`). This uses the `windows-sys`
+crate with minimal privileges.
 
 ## What to verify
 
@@ -59,6 +74,7 @@ itself serves as the liveness probe for this spike.
       4-byte LE length prefix followed by `{"token":"<uuid>"}`
 - [ ] Ctrl+C on bridge cleans up socket file and lockfile
 - [ ] Stale lockfiles (dead PIDs) are cleaned up by bootstrap
+- [ ] `--mode=stale-test` passes all checks (lockfile cleanup + PID exclusion)
 
 ## Wire protocol
 
@@ -90,15 +106,3 @@ v0.4.0 production implementation:
    accessible to all users on the machine. Production code must construct a
    `SECURITY_ATTRIBUTES` with a DACL restricting access to the current user's
    SID (via `windows-sys` or `winapi` crate).
-
-2. **Windows PID liveness:** The spike skips PID liveness checks on Windows
-   (`is_pid_alive` always returns `true`). Production code must use
-   `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, ...)` + `GetExitCodeProcess`
-   to verify the bridge process is still running.
-
-3. **Stale socket cleanup testing:** Only the happy path (bridge running →
-   bootstrap connects) has been manually verified. The stale cleanup path
-   (bridge crashes → lockfile remains → bootstrap detects dead PID → removes
-   lockfile and socket) needs an automated test before production use. This
-   is especially important on Windows where the PID check is not yet
-   implemented.
