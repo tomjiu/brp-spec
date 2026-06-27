@@ -45,20 +45,10 @@
 
   // ─── Safe Content Script Messaging ───
 
-  const RESTRICTED_URL_PREFIXES = [
-    "about:", "chrome:", "moz-extension:", "resource:",
-    "view-source:", "blob:", "data:", "javascript:"
-  ];
-
-  function isRestrictedUrl(url) {
-    if (!url) return true;
-    return RESTRICTED_URL_PREFIXES.some(prefix => url.startsWith(prefix));
-  }
-
   async function sendToContentScript(tabId, message, timeoutMs = 15000) {
     try {
       const tab = await browser.tabs.get(tabId);
-      if (isRestrictedUrl(tab.url)) {
+      if (BRP.isRestrictedUrl(tab.url)) {
         return {
           error: `Cannot interact with restricted page: ${tab.url}`,
           errorCode: "BRP_RESTRICTED_PAGE",
@@ -350,7 +340,7 @@
 
   async function handleTabOpen(params) {
     const url = params?.url || "about:blank";
-    const urlErr = validateUrl(url);
+    const urlErr = BRP.validateUrl(url);
     if (urlErr) throw new Error(urlErr);
 
     const tab = await browser.tabs.create({
@@ -385,11 +375,11 @@
 
   async function handlePageNavigate(params) {
     const url = params?.uri || params?.url;
-    const urlErr = validateUrl(url);
+    const urlErr = BRP.validateUrl(url);
     if (urlErr) throw new Error(urlErr);
 
     const tabId = params?.tabId || (await getActiveTabId());
-    const tabErr = validateTabId(tabId);
+    const tabErr = BRP.validateTabId(tabId);
     if (tabErr) throw new Error(tabErr);
 
     agentTabIds.add(tabId); // Mark as agent-controlled
@@ -405,11 +395,11 @@
 
   async function handleElementAction(actionType, params) {
     const tabId = params?.tabId || (await getActiveTabId());
-    const tabErr = validateTabId(tabId);
+    const tabErr = BRP.validateTabId(tabId);
     if (tabErr) throw new Error(tabErr);
 
     // Validate selector
-    const selErr = validateSelector(params?.selector || params?.selectors);
+    const selErr = BRP.validateSelector(params?.selector || params?.selectors);
     if (selErr) throw new Error(selErr);
 
     // Validate text input length
@@ -438,7 +428,7 @@
 
   async function handleKeyboardPress(params) {
     const tabId = params?.tabId || (await getActiveTabId());
-    const tabErr = validateTabId(tabId);
+    const tabErr = BRP.validateTabId(tabId);
     if (tabErr) throw new Error(tabErr);
 
     // Validate key combination length (e.g. "Control+Shift+a" = 17 chars)
@@ -488,7 +478,7 @@
 
   async function handleScriptExecute(params) {
     const tabId = params?.tabId || (await getActiveTabId());
-    const tabErr = validateTabId(tabId);
+    const tabErr = BRP.validateTabId(tabId);
     if (tabErr) throw new Error(tabErr);
 
     // Validate code size (content.js also has a 1MB limit)
@@ -529,49 +519,7 @@
     });
   }
 
-  // ─── Input Validation ───
-
-  /**
-   * Validate URL scheme for navigation. Only http(s) and about:blank are allowed.
-   * Returns null if valid, or an error message if invalid.
-   */
-  function validateUrl(url) {
-    if (!url || typeof url !== "string") return "URL is required";
-    if (url.length > 8192) return "URL too long (max 8192 chars)";
-    try {
-      const parsed = new URL(url);
-      const scheme = parsed.protocol.toLowerCase();
-      if (scheme !== "http:" && scheme !== "https:" && url !== "about:blank") {
-        return `Blocked URL scheme: ${scheme} (only http(s) and about:blank allowed)`;
-      }
-      return null;
-    } catch (e) {
-      return `Invalid URL: ${e.message}`;
-    }
-  }
-
-  /**
-   * Validate a selector object. Returns null if valid, error message otherwise.
-   */
-  function validateSelector(selector) {
-    if (!selector) return null; // optional in some contexts
-    if (typeof selector === "object" && selector.value) {
-      if (typeof selector.value !== "string") return "Selector value must be a string";
-      if (selector.value.length > 4096) return "Selector too long (max 4096 chars)";
-    }
-    return null;
-  }
-
-  /**
-   * Validate tabId parameter. Returns null if valid, error message otherwise.
-   */
-  function validateTabId(tabId) {
-    if (tabId === undefined || tabId === null) return null; // optional
-    if (typeof tabId !== "number" || !Number.isInteger(tabId) || tabId < 0) {
-      return "tabId must be a non-negative integer";
-    }
-    return null;
-  }
+  // ─── Input Validation (delegated to BRP global from handlers.js) ───
 
   // ─── Global Navigation Sentinel ───
 
@@ -584,26 +532,11 @@
    *   - Any other indirect navigation (not just page.navigate)
    */
   browser.webNavigation.onBeforeNavigate.addListener((details) => {
-    // Only enforce on tabs the agent has interacted with.
-    // User's own browsing (file:// PDFs, blob: URLs, etc.) is untouched.
-    if (!agentTabIds.has(details.tabId)) return;
-
-    const url = details.url;
-    if (!url) return;
-
-    // Allow http(s) and about:blank
-    if (url === "about:blank") return;
-    try {
-      const parsed = new URL(url);
-      const scheme = parsed.protocol.toLowerCase();
-      if (scheme === "http:" || scheme === "https:") return;
-    } catch (e) {
-      // Invalid URL — let the browser handle it
-      return;
-    }
+    const decision = BRP.shouldBlockNavigation(details.url, details.tabId, agentTabIds);
+    if (!decision.block) return;
 
     // Block dangerous schemes (file:, javascript:, data:, blob:, etc.)
-    console.warn(`[BRP] Navigation sentinel: BLOCKED ${url} in tab ${details.tabId}`);
+    console.warn(`[BRP] Navigation sentinel: BLOCKED ${details.url} in tab ${details.tabId}`);
     // Cancel the navigation by redirecting to about:blank
     browser.tabs.update(details.tabId, { url: "about:blank" }).catch(() => {});
     sendToBridge({
@@ -611,8 +544,8 @@
       method: "notification/navigationBlocked",
       params: {
         tabId: details.tabId,
-        url: url,
-        reason: "Blocked by BRP navigation sentinel (non-http(s) scheme)",
+        url: details.url,
+        reason: decision.reason,
       },
     });
   });

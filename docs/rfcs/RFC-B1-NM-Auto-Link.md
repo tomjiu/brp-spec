@@ -4,7 +4,7 @@
 - **Title:** Native Messaging Auto-Link
 - **Status:** Draft
 - **Author:** tomjiu
-- **Version:** 0.3.1
+- **Version:** 0.3.1-patch
 - **Created:** 2026-06-27
 - **Requires:** RFC0001
 
@@ -658,15 +658,643 @@ during the v0.3.2 spike cross-platform phase.
 
 ---
 
-# 4. Future Chapters (Planned for v0.3.2)
+# 4. Installation & Distribution
+
+For Firefox to spawn the bootstrap process via `browser.runtime.connectNative()`,
+a Native Messaging manifest file MUST be present at a platform-specific location.
+This section defines the manifest format, installation paths, and the automated
+install mechanism.
+
+## 4.1 Native Messaging Manifest
+
+The manifest is a JSON file named `org.brp.bridge.json` that tells Firefox where
+to find the bootstrap binary and which extensions are permitted to invoke it.
+
+### Schema
+
+```json
+{
+  "name": "org.brp.bridge",
+  "description": "BRP Bridge Native Messaging Host",
+  "path": "/absolute/path/to/brp-bridge",
+  "type": "stdio",
+  "allowed_extensions": ["brp-extension@yourdomain.com"]
+}
+```
+
+| Field                | Type       | Required | Description                                              |
+|----------------------|------------|----------|----------------------------------------------------------|
+| `name`               | string     | Yes      | MUST be `"org.brp.bridge"`. Used as the argument to `connectNative()`. |
+| `description`        | string     | Yes      | Human-readable description shown in `about:addons`.      |
+| `path`               | string     | Yes      | Absolute path to the `brp-bridge` binary. MUST NOT contain relative components. |
+| `type`               | string     | Yes      | MUST be `"stdio"`. Firefox communicates via stdin/stdout. |
+| `allowed_extensions` | string[]   | Yes      | List of extension IDs permitted to invoke this host.     |
+
+The `path` field SHALL point to a binary that accepts `--mode=bootstrap` (see
+Section 1.2). The binary MUST be executable by the OS user running Firefox.
+
+---
+
+## 4.2 Platform Manifest Paths
+
+Firefox reads the manifest from a well-known directory determined by the
+operating system and browser variant.
+
+| Platform              | Manifest directory                                                          | Install method                              |
+|-----------------------|-----------------------------------------------------------------------------|---------------------------------------------|
+| Linux (Firefox)       | `~/.mozilla/native-messaging-hosts/org.brp.bridge.json`                     | `install.sh` or `brp-bridge --install`      |
+| macOS (Firefox)       | `~/Library/Application Support/Mozilla/NativeMessagingHosts/org.brp.bridge.json` | `install.sh` or `brp-bridge --install` |
+| Windows (Firefox)     | Registry `HKCU\Software\Mozilla\NativeMessagingHosts\org.brp.bridge`        | `install.ps1` or `brp-bridge --install`     |
+| Linux (Flatpak/Zen)   | `~/.var/app/org.mozilla.firefox/app/native-messaging-hosts/` (or Zen path)  | Documentation + manual; P3 priority         |
+
+### Linux
+
+The manifest file is placed in:
+
+```
+~/.mozilla/native-messaging-hosts/org.brp.bridge.json
+```
+
+If the directory `~/.mozilla/native-messaging-hosts/` does not exist, the
+installer SHALL create it with permissions `0o755`.
+
+### macOS
+
+The manifest file is placed in:
+
+```
+~/Library/Application Support/Mozilla/NativeMessagingHosts/org.brp.bridge.json
+```
+
+If the directory does not exist, the installer SHALL create it with permissions
+`0o755`.
+
+### Windows
+
+Firefox on Windows does not use a file-based manifest. Instead, a registry key
+is created:
+
+```
+HKCU\Software\Mozilla\NativeMessagingHosts\org.brp.bridge
+    (Default) = REG_SZ "C:\absolute\path\to\org.brp.bridge.json"
+```
+
+The registry value points to the manifest JSON file, which is written alongside
+the binary (e.g., `C:\Program Files\BRP\org.brp.bridge.json`). The installer
+SHALL create both the registry key and the manifest file.
+
+### Flatpak / Zen Browser
+
+Flatpak-sandboxed Firefox (and Zen Browser variants) use a separate data
+directory that is isolated from the host filesystem:
+
+```
+~/.var/app/org.mozilla.firefox/app/native-messaging-hosts/org.brp.bridge.json
+```
+
+The exact path varies by Flatpak application ID and browser fork. Because
+Flatpak installations differ significantly across distributions, automated
+installation is **not** provided in the initial release. Users SHALL follow
+manual documentation to place the manifest in the correct directory. Flatpak
+support is tracked as a P3 priority.
+
+---
+
+## 4.3 `--install` Behavior
+
+The `brp-bridge --install` command automates manifest installation. It SHALL
+execute the following sequence:
+
+```
+1. Detect platform (Linux, macOS, Windows)
+2. Detect browser variant (Firefox, Zen, Flatpak Firefox)
+3. Resolve manifest target path (see Section 4.2)
+4. Compute the absolute path of the current brp-bridge binary
+5. Generate manifest JSON with `path` set to the binary's absolute path
+6. Write manifest to the target location
+7. Verify the written file is readable
+8. Print success message with manifest path
+```
+
+### Platform detection
+
+| Platform | Detection method                                          |
+|----------|-----------------------------------------------------------|
+| Linux    | `std::env::consts::OS == "linux"` and no Flatpak marker   |
+| macOS    | `std::env::consts::OS == "macos"`                         |
+| Windows  | `std::env::consts::OS == "windows"`                        |
+| Flatpak  | `/run/host/os-release` exists or `FLATPAK_ID` env var set |
+
+### Browser variant detection
+
+The installer SHALL probe for the following browser variants in order:
+
+1. **Standard Firefox** -- check default manifest directory exists or can be
+   created.
+2. **Zen Browser** -- check for Zen-specific config directories (e.g.,
+   `~/.zen/` on Linux, `~/Library/Application Support/Zen/` on macOS).
+3. **Flatpak Firefox** -- check for `~/.var/app/org.mozilla.firefox/`.
+
+If multiple variants are detected, the installer SHALL install for all detected
+variants and print each manifest path.
+
+### Binary path resolution
+
+The installer SHALL resolve its own absolute path using:
+
+```rust
+let exe_path = std::env::current_exe()?
+    .canonicalize()?;
+```
+
+This path is written into the manifest's `path` field. The path MUST be
+canonicalized to resolve symlinks, ensuring Firefox can locate the binary even
+if it was installed via a symlinked wrapper (e.g., Homebrew, Nix).
+
+### Non-invasive failure
+
+If the installer lacks permissions to write to the target directory (e.g.,
+system-wide install on Linux), it SHALL NOT attempt privilege escalation.
+Instead, it SHALL:
+
+1. Print the manifest JSON to stdout.
+2. Print the manual commands needed to install it:
+
+```
+# Manual installation required:
+mkdir -p ~/.mozilla/native-messaging-hosts/
+cp /tmp/org.brp.bridge.json ~/.mozilla/native-messaging-hosts/
+```
+
+This ensures the installer is safe to run in unattended or CI environments
+without risk of unexpected privilege prompts.
+
+### Windows registry write
+
+On Windows, the installer SHALL:
+
+1. Write the manifest JSON file to the same directory as the binary.
+2. Create the registry key `HKCU\Software\Mozilla\NativeMessagingHosts\org.brp.bridge`.
+3. Set the `(Default)` value to the absolute path of the manifest JSON file.
+
+If registry write fails (e.g., group policy restriction), the installer SHALL
+print the `.reg` file contents for manual import:
+
+```
+Windows Registry Editor Version 5.00
+
+[HKEY_CURRENT_USER\Software\Mozilla\NativeMessagingHosts\org.brp.bridge]
+@="C:\\Program Files\\BRP\\org.brp.bridge.json"
+```
+
+---
+
+## 4.4 Install Scripts
+
+### `install.sh` (Linux / macOS)
+
+A POSIX-compatible shell script distributed alongside the binary. It SHALL:
+
+1. Verify `brp-bridge` is on `$PATH` or in the same directory as the script.
+2. Resolve the absolute path to `brp-bridge`.
+3. Create the target directory if absent.
+4. Write the manifest JSON.
+5. Print a success or failure message.
+
+```bash
+#!/bin/sh
+set -e
+
+BINARY="$(cd "$(dirname "$0")" && pwd)/brp-bridge"
+if [ ! -x "$BINARY" ]; then
+  echo "Error: brp-bridge not found or not executable" >&2
+  exit 1
+fi
+
+if [ "$(uname)" = "Darwin" ]; then
+  DIR="$HOME/Library/Application Support/Mozilla/NativeMessagingHosts"
+else
+  DIR="$HOME/.mozilla/native-messaging-hosts"
+fi
+
+mkdir -p "$DIR"
+cat > "$DIR/org.brp.bridge.json" <<EOF
+{
+  "name": "org.brp.bridge",
+  "description": "BRP Bridge Native Messaging Host",
+  "path": "$BINARY",
+  "type": "stdio",
+  "allowed_extensions": ["brp-extension@yourdomain.com"]
+}
+EOF
+
+echo "Installed manifest to $DIR/org.brp.bridge.json"
+```
+
+### `install.ps1` (Windows)
+
+A PowerShell script that SHALL:
+
+1. Locate `brp-bridge.exe` relative to the script or on `$env:PATH`.
+2. Write the manifest JSON alongside the binary.
+3. Create the Firefox registry key.
+4. Set the registry value to the manifest path.
+
+```powershell
+$ErrorActionPreference = "Stop"
+
+$BinaryDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$BinaryPath = Join-Path $BinaryDir "brp-bridge.exe"
+$ManifestPath = Join-Path $BinaryDir "org.brp.bridge.json"
+
+if (-not (Test-Path $BinaryPath)) {
+    Write-Error "brp-bridge.exe not found in $BinaryDir"
+    exit 1
+}
+
+$Manifest = @{
+    name = "org.brp.bridge"
+    description = "BRP Bridge Native Messaging Host"
+    path = $BinaryPath
+    type = "stdio"
+    allowed_extensions = @("brp-extension@yourdomain.com")
+} | ConvertTo-Json
+
+Set-Content -Path $ManifestPath -Value $Manifest -Encoding UTF8
+
+$RegPath = "HKCU:\Software\Mozilla\NativeMessagingHosts\org.brp.bridge"
+New-Item -Path $RegPath -Force | Out-Null
+Set-ItemProperty -Path $RegPath -Name "(Default)" -Value $ManifestPath
+
+Write-Host "Installed manifest and registry key."
+```
+
+---
+
+## 4.5 Uninstallation
+
+The `brp-bridge --uninstall` command SHALL reverse the installation:
+
+| Platform | Action                                                                 |
+|----------|------------------------------------------------------------------------|
+| Linux    | Delete `~/.mozilla/native-messaging-hosts/org.brp.bridge.json`. Remove parent directory if empty. |
+| macOS    | Delete `~/Library/Application Support/Mozilla/NativeMessagingHosts/org.brp.bridge.json`. Remove parent directory if empty. |
+| Windows  | Delete registry key `HKCU\...\org.brp.bridge`. Delete manifest JSON file alongside the binary. |
+
+The uninstaller SHALL NOT delete the `brp-bridge` binary itself, as it may be
+managed by an external package manager.
+
+---
+
+# 5. Token Bootstrap Protocol
+
+This section defines the end-to-end protocol by which the Firefox extension
+obtains a session token from the running Bridge and establishes a WebSocket
+connection. It builds on the IPC mechanism (Section 2) and NM output format
+(Section 2.4) defined earlier, adding the bootstrap-specific message flow,
+error handling, and token lifecycle rules.
+
+## 5.1 Connection Sequence
+
+The complete handshake from extension invocation to WebSocket registration:
+
+```
+Extension                    Bootstrap (NM child)              Bridge (main process)
+   │                              │                                │
+   │ 1. connectNative("org.brp.bridge")                            │
+   │──────────────────────────────>                                │
+   │                              │  Firefox spawns brp-bridge      │
+   │                              │  --mode=bootstrap               │
+   │                              │                                │
+   │                              │ 2. Scan lockfiles, select MRU  │
+   │                              │────────────────────────────────>
+   │                              │ 3. IPC: request_token          │
+   │                              │────────────────────────────────>
+   │                              │ 4. IPC: token_response         │
+   │                              │<────────────────────────────────
+   │                              │                                │
+   │ 5. NM onMessage(token, ws_port)                               │
+   │<──────────────────────────────                                │
+   │                              │ 6. Exit 0                      │
+   │                              X                                │
+   │ 7. WS connect ws://127.0.0.1:<ws_port>?token=<token>         │
+   │──────────────────────────────────────────────────────────────>
+   │                              │                                │
+   │                              │          8. Validate token      │
+   │                              │          9. Register client     │
+   │ 10. WS open confirmed        │                                │
+   │<──────────────────────────────────────────────────────────────
+```
+
+### Step-by-step description
+
+1. **Extension calls `connectNative`.** The extension invokes
+   `browser.runtime.connectNative("org.brp.bridge")`. Firefox reads the
+   manifest at the platform-specific path (Section 4.2) and spawns the binary
+   listed in the `path` field with the arguments `--mode=bootstrap`.
+
+2. **Bootstrap discovers Bridge.** The bootstrap process scans
+   `~/.brp-bridge/instances/*.json`, verifies PID liveness, and selects the
+   MRU instance (Section 2.2).
+
+3. **Bootstrap sends `request_token`.** The bootstrap connects to the Bridge's
+   IPC endpoint and sends a `request_token` message (Section 5.2).
+
+4. **Bridge responds with `token_response`.** The Bridge validates the request
+   and returns the current session token, WebSocket port, and metadata
+   (Section 5.2).
+
+5. **Bootstrap writes NM message.** The bootstrap serializes the token
+   response into the NM wire format (Section 5.3) and writes it to stdout.
+   Firefox delivers this to the extension via the NM port's `onMessage`
+   callback.
+
+6. **Bootstrap exits.** After writing the NM message, the bootstrap process
+   SHALL exit with code 0 (success) or code 1 (error). The NM port is closed
+   by Firefox after the child process exits.
+
+7. **Extension connects WebSocket.** The extension opens a WebSocket connection
+   to `ws://127.0.0.1:<ws_port>` and includes the token in the connection
+   handshake (query parameter or first message, per RFC0001).
+
+8. **Bridge validates token.** The Bridge performs a constant-time comparison
+   of the presented token against the stored session token (Section 5.5).
+
+9. **Bridge registers client.** Upon successful validation, the Bridge
+   registers the extension as an authenticated WebSocket client.
+
+10. **Connection confirmed.** The WebSocket is open and bidirectional
+    communication begins.
+
+---
+
+## 5.2 IPC Message Format (Bootstrap-Specific)
+
+The bootstrap process communicates with the Bridge over the IPC channel defined
+in Section 2.3. The following messages are specific to the bootstrap flow.
+
+### request_token
+
+Sent by the bootstrap process to the Bridge over IPC.
+
+```json
+{
+  "type": "request_token",
+  "data": {
+    "browser_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+  }
+}
+```
+
+| Field           | Type   | Required | Description                                                 |
+|-----------------|--------|----------|-------------------------------------------------------------|
+| `type`          | string | Yes      | MUST be `"request_token"`                                   |
+| `data.browser_id` | string | Yes    | UUID v4 identifying the browser instance making the request |
+
+The `browser_id` is generated by the extension at install time and persisted in
+extension storage. It allows the Bridge to audit which browser instances have
+requested tokens and to enforce per-browser rate limits.
+
+### token_response (success)
+
+Returned by the Bridge when the token is available and the request is accepted.
+
+```json
+{
+  "type": "token_response",
+  "data": {
+    "token": "e2b7f4a1-9c3d-4e5f-8a6b-1d2c3e4f5a6b",
+    "ws_port": 9817
+  }
+}
+```
+
+| Field          | Type    | Required | Description                                      |
+|----------------|---------|----------|--------------------------------------------------|
+| `type`         | string  | Yes      | MUST be `"token_response"`                       |
+| `data.token`   | string  | Yes      | The session token (UUID v4)                      |
+| `data.ws_port` | integer | Yes      | WebSocket server port on `127.0.0.1`             |
+
+### token_response (error)
+
+Returned when the Bridge rejects the request.
+
+```json
+{
+  "type": "token_error",
+  "data": {
+    "code": "BRP_BRIDGE_NOT_RUNNING",
+    "message": "No live Bridge instance found"
+  }
+}
+```
+
+| Field             | Type   | Required | Description                          |
+|-------------------|--------|----------|--------------------------------------|
+| `type`            | string | Yes      | MUST be `"token_error"`              |
+| `data.code`       | string | Yes      | Machine-readable error code          |
+| `data.message`    | string | Yes      | Human-readable description           |
+
+---
+
+## 5.3 Bootstrap Error Codes
+
+The following error codes MAY be returned in a `token_error` message or
+written to the NM stdout error payload (Section 2.4):
+
+| Code                          | Meaning                                                      | Retryable |
+|-------------------------------|--------------------------------------------------------------|-----------|
+| `BRP_BRIDGE_NOT_RUNNING`      | No live Bridge instance found during lockfile scan           | Yes       |
+| `BRP_BRIDGE_BUSY`             | Bridge rejected the connection (rate limit exceeded)         | Yes       |
+| `BRP_INVALID_BROWSER_ID`      | `browser_id` is not a valid UUID v4                          | No        |
+| `BRP_IPC_CONNECT_FAILED`      | Could not connect to the Bridge's IPC endpoint               | Yes       |
+| `BRP_IPC_TIMEOUT`             | No IPC response within 5-second timeout                      | Yes       |
+| `BRP_IPC_PROTOCOL_ERROR`      | Malformed or unexpected IPC response from Bridge              | No        |
+| `BRP_BOOTSTRAP_INTERNAL_ERROR`| Unhandled internal error in the bootstrap process             | No        |
+
+### Retry guidance
+
+For **retryable** errors, the extension SHOULD implement exponential backoff
+with the following schedule: 1s, 2s, 4s, 8s, 16s, max 30s. After 5
+consecutive failures, the extension SHOULD present a user-facing error with
+an option to retry manually.
+
+For **non-retryable** errors, the extension SHALL display a diagnostic message
+and direct the user to the troubleshooting documentation.
+
+---
+
+## 5.4 Native Messaging Output Format
+
+After receiving a `token_response` from the Bridge, the bootstrap process
+SHALL serialize the result and write it to stdout using the Native Messaging
+wire format defined in Section 2.4:
+
+```
+[4-byte little-endian message length][UTF-8 JSON payload]
+```
+
+### Success output
+
+```json
+{
+  "token": "e2b7f4a1-9c3d-4e5f-8a6b-1d2c3e4f5a6b",
+  "ws_port": 9817
+}
+```
+
+### Error output
+
+```json
+{
+  "error": {
+    "code": "BRP_BRIDGE_NOT_RUNNING",
+    "message": "No running Bridge instance found"
+  }
+}
+```
+
+The extension SHALL check for the presence of the `token` field to determine
+success. If `error` is present instead, the extension SHALL use `error.code`
+to select the appropriate user-facing behavior (see Section 5.3).
+
+### Maximum message size
+
+Firefox imposes a 1 MB limit on NM messages. The BRP token response is
+typically under 200 bytes, well within this limit. The bootstrap process
+SHALL NOT produce messages exceeding 1 MB.
+
+---
+
+## 5.5 Token Lifecycle
+
+### Generation
+
+The Bridge SHALL generate a UUID v4 token during startup (Section 2.1, step 1).
+The token is the sole credential for WebSocket authentication and MUST be
+cryptographically random.
+
+```rust
+use uuid::Uuid;
+
+let token = Uuid::new_v4().to_string();
+// e.g. "e2b7f4a1-9c3d-4e5f-8a6b-1d2c3e4f5a6b"
+```
+
+### Reusability
+
+The token SHALL be **reusable** for multiple WebSocket registration attempts.
+Rationale:
+
+1. The extension may need to reconnect after a transient network failure
+   (e.g., laptop sleep/wake) without re-running the full bootstrap flow.
+2. The Bridge is the sole token authority; there is no external token issuer
+   to request fresh tokens from.
+3. The token is bound to `127.0.0.1` and defended by the same-user trust
+   domain (Section 3.1), so replay risk is limited to same-user processes.
+
+The token SHALL remain valid for the lifetime of the Bridge process instance.
+
+### Validation
+
+The Bridge SHALL validate presented tokens using **constant-time comparison**
+to prevent timing side-channel attacks:
+
+```rust
+use subtle::ConstantTimeEq;
+
+fn validate_token(presented: &str, stored: &str) -> bool {
+    presented.as_bytes().ct_eq(stored.as_bytes()).into()
+}
+```
+
+If the presented token does not match, the Bridge SHALL close the WebSocket
+connection immediately with status code `4401` (Unauthorized) and SHALL NOT
+provide further detail in the close frame payload.
+
+### Rotation
+
+The token SHALL be rotated under the following conditions:
+
+| Trigger                          | Behavior                                                        |
+|----------------------------------|-----------------------------------------------------------------|
+| Bridge process restart           | New UUID v4 generated; old token invalidated                    |
+| Explicit revocation via MCP RPC  | Bridge generates new UUID v4; existing WS clients disconnected  |
+| `BRP_TOKEN_REVOKED` state        | Bootstrap receives error; extension must re-run bootstrap after Bridge regenerates |
+
+The Bridge SHALL NOT rotate the token on a time-based schedule. Time-based
+rotation adds complexity without meaningful security benefit given the
+same-user, localhost-only threat model (Section 3.3).
+
+### Token storage
+
+The token SHALL be held in memory only. It SHALL NOT be written to disk,
+logged, or transmitted over any channel other than the IPC socket and the
+WebSocket handshake. This limits the attack surface to same-user process
+memory inspection.
+
+---
+
+## 5.6 Rate Limiting
+
+To prevent a misbehaving or malicious extension from spawning excessive
+bootstrap processes, the Bridge SHALL enforce rate limits on `request_token`
+IPC messages:
+
+| Parameter               | Value          | Description                                      |
+|-------------------------|----------------|--------------------------------------------------|
+| Max requests per minute | 10             | Per `browser_id`                                 |
+| Concurrent connections  | 5              | Maximum simultaneous IPC connections from bootstrap processes |
+| Cooldown after rejection| 5 seconds      | Minimum wait before the same `browser_id` may retry |
+
+If a request is rejected due to rate limiting, the Bridge SHALL respond with:
+
+```json
+{
+  "type": "token_error",
+  "data": {
+    "code": "BRP_BRIDGE_BUSY",
+    "message": "Rate limit exceeded, retry after 5 seconds"
+  }
+}
+```
+
+---
+
+## 5.7 Bootstrap Process Constraints
+
+The bootstrap process operates under strict constraints to minimize its
+attack surface:
+
+1. **Single request.** The bootstrap process SHALL send exactly one
+   `request_token` message and read exactly one response. It SHALL NOT
+   maintain a persistent IPC connection.
+
+2. **Timeout.** The entire connect-send-receive cycle SHALL be subject to
+   a 5-second timeout (Section 2.8). If the timeout elapses, the bootstrap
+   writes a `BRP_IPC_TIMEOUT` error to stdout and exits with code 1.
+
+3. **No stdin consumption.** The bootstrap process SHALL NOT read from stdin.
+   Firefox provides stdin for NM communication, but the bootstrap only uses
+   stdout for the response.
+
+4. **Clean exit.** After writing the NM message (success or error), the
+   bootstrap process SHALL close stdout and exit. It SHALL NOT spawn child
+   processes, write files, or perform any side effects beyond the NM output.
+
+5. **No environment leakage.** The bootstrap process SHALL NOT include
+   environment variables, process arguments, or other host metadata in the
+   NM output beyond what is defined in Section 5.4.
+
+---
+
+# Remaining Chapters (Planned for v0.3.2)
 
 The following chapters are **not yet written**. They will be completed in
 v0.3.2 after the B1 spike validates cross-platform IPC behavior.
 
 | Chapter | Title                          | Status      | Depends On                                    |
 |---------|--------------------------------|-------------|-----------------------------------------------|
-| §4      | Installation & Distribution    | Planned     | Spike validates manifest path detection       |
-| §5      | Token Bootstrap Protocol       | Planned     | Spike validates IPC message format            |
 | §6      | Extension-Side Implementation  | Planned     | §5 defines the protocol                       |
 | §7      | Crash Recovery & Reconnection  | Planned     | Spike validates stale lockfile cleanup        |
 | §8      | Multi-Browser Support          | Planned     | §4 covers per-browser manifest paths          |
@@ -690,6 +1318,7 @@ designs that the spike later proves infeasible.
 
 # Changelog
 
-| Version | Date       | Changes                                    |
-|---------|------------|--------------------------------------------|
-| 0.3.1   | 2026-06-27 | Initial draft: Chapters 1-3, References    |
+| Version      | Date       | Changes                                                      |
+|--------------|------------|--------------------------------------------------------------|
+| 0.3.1-patch  | 2026-07-02 | Added §4 Installation & Distribution, §5 Token Bootstrap Protocol; renumbered future chapters to §6-§8 |
+| 0.3.1        | 2026-06-27 | Initial draft: Chapters 1-3, References                      |
