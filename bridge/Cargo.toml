@@ -1,7 +1,8 @@
 [package]
 name = "brp-bridge"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
+rust-version = "1.85"
 description = "BRP Native Messaging Bridge for Firefox/Zen Browser"
 license = "MIT"
 
@@ -15,6 +16,7 @@ uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.26"
 futures-util = "0.3"
+subtle = "2"
 
 [profile.release]
 opt-level = "s"
