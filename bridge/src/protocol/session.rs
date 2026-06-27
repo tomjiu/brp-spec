@@ -1,7 +1,8 @@
+#![allow(dead_code)]
+
 /// BRP Session Lifecycle (RFC0001 §10)
 ///
 /// States: Disconnected → Connecting → Authenticating → Ready → Busy → Closing → Closed
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;

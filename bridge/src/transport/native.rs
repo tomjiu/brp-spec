@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /// Firefox Native Messaging Transport
 ///
 /// Firefox communicates with native applications using stdin/stdout with
@@ -6,7 +8,6 @@
 /// - Receive: [4-byte message length (native endian u32)] [UTF-8 JSON]
 ///
 /// Reference: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Native_messaging
-
 use serde_json::Value;
 use std::io::{self, Read, Write};
 use tokio::sync::mpsc;
@@ -38,16 +39,11 @@ pub fn read_native_message() -> io::Result<Option<Value>> {
     let mut buf = vec![0u8; len];
     handle.read_exact(&mut buf)?;
 
-    let text = String::from_utf8(buf).map_err(|e| {
-        io::Error::new(io::ErrorKind::InvalidData, format!("Invalid UTF-8: {}", e))
-    })?;
+    let text = String::from_utf8(buf)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid UTF-8: {}", e)))?;
 
-    let value: Value = serde_json::from_str(&text).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Invalid JSON: {}", e),
-        )
-    })?;
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid JSON: {}", e)))?;
 
     Ok(Some(value))
 }
@@ -110,5 +106,5 @@ pub async fn send_native_message(msg: &Value) -> io::Result<()> {
     let msg = msg.clone();
     tokio::task::spawn_blocking(move || write_native_message(&msg))
         .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Join error: {}", e)))?
+        .map_err(|e| io::Error::other(format!("Join error: {}", e)))?
 }
