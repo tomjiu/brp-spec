@@ -37,13 +37,13 @@
 - [x] **B1 Spike** Dual-mode binary, tokio native IPC (Unix Socket + Windows Named Pipe)
 - [x] PR #5 merged to main
 
-## v0.3.1-patch — Extension Tests + RFC Expansion [ ]
+## v0.3.1-patch — Extension Tests + RFC Expansion ✅
 
-- [ ] **D1** background.js: extract pure functions (message routing, state machine) from `browser` globals
-- [ ] **D1** itree.js / content.js: Vitest + happy-dom unit tests
-- [ ] **D1** Cover the async listener bug that leaked to v0.3.0 production
-- [ ] **B1 RFC** §4 Installation & Distribution (install.sh, --install, manifest paths)
-- [ ] **B1 RFC** §5 Token Bootstrap Protocol (IPC message format, one-time vs reuse)
+- [x] **D1** background.js: extract pure functions (message routing, state machine) from `browser` globals → `handlers.js`
+- [x] **D1** itree.js / content.js: Vitest + happy-dom unit tests (73 tests)
+- [x] **D1** Cover the async listener bug that leaked to v0.3.0 production (11 regression tests)
+- [x] **B1 RFC** §4 Installation & Distribution (install.sh, --install, manifest paths)
+- [x] **B1 RFC** §5 Token Bootstrap Protocol (IPC message format, token reusability)
 
 ## v0.3.2 — B1 RFC Finalization [ ]
 
