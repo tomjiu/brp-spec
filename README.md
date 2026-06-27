@@ -181,6 +181,8 @@ The Bridge implements BRP RFC0001 (Draft). Key features:
 
 ## Security
 
+See [`SECURITY.md`](SECURITY.md) for the full threat model, security invariants, and known risks, and [`docs/SECURITY-ARCHITECTURE-DECISIONS.md`](docs/SECURITY-ARCHITECTURE-DECISIONS.md) for the v0.3.0 hardening roadmap.
+
 - **Token Authentication**: The Bridge generates a UUID v4 token on startup, writes it to a platform-specific file path, and serves it via a local HTTP endpoint. The Extension fetches the token and includes it in the registration handshake. Connections without a valid token are rejected.
 - **Token File Locations**:
   - Windows: `%APPDATA%\brp-bridge\token`
