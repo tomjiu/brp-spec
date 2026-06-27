@@ -338,6 +338,25 @@ async fn main() {
         });
     }
 
+    // ── Standalone Mode ──
+    // When BRP_STANDALONE=1, Bridge runs as pure WS server (no stdin/stdout needed).
+    // The MCP adapter connects via WebSocket directly.
+    let standalone = std::env::var("BRP_STANDALONE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    if standalone {
+        log::info!("[Bridge] Running in STANDALONE mode (WebSocket only, no stdin)");
+
+        // Just keep the WS server alive until Ctrl+C
+        match tokio::signal::ctrl_c().await {
+            Ok(_) => log::info!("[Bridge] Ctrl+C received"),
+            Err(e) => log::error!("[Bridge] Signal error: {}", e),
+        }
+        log::info!("BRP Bridge exiting (standalone)");
+        return;
+    }
+
     // ── Stdin Reader (AI Client → Bridge) ──
     tokio::task::spawn_blocking(move || {
         log::info!("[Stdin] Listening for AI client requests...");

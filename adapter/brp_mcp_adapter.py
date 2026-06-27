@@ -2,64 +2,80 @@
 BRP MCP Adapter — Exposes BRP Bridge as a standard MCP server for QoderWork.
 
 Architecture:
-  QoderWork ←→ MCP (stdio) ←→ This Adapter ←→ WebSocket ←→ BRP Bridge ←→ Firefox Extension
+  QoderWork ←→ MCP (stdio) ←→ This Adapter ←→ stdin/stdout (Native Messaging) ←→ BRP Bridge ←→ WS ←→ Firefox Extension
+
+The adapter spawns brp-bridge as a child process and communicates via
+Native Messaging format (4-byte LE length prefix + JSON-RPC).
+The Bridge runs its WS server; the Firefox Extension connects to it.
 
 Usage:
-  python -X utf8 brp_mcp_adapter.py [--ws-url ws://127.0.0.1:9817]
+  python -X utf8 brp_mcp_adapter.py [--bridge-path /path/to/brp-bridge]
 """
 
 import asyncio
 import json
 import sys
+import os
+import struct
 import argparse
 import logging
-from typing import Any
+from typing import Optional
 
-import os
-import websockets
 from mcp.server.fastmcp import FastMCP
 
-# ── Logging ──
+# ── Logging (stderr only — stdout is MCP protocol) ──
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    stream=sys.stderr,  # MCP uses stdout for protocol, logs go to stderr
+    stream=sys.stderr,
 )
 log = logging.getLogger("brp-mcp")
 
-# ── BRP Connection State ──
-_bridge_ws = None
-_bridge_ws_url = "ws://127.0.0.1:9817"
-_request_id = 10000
+# ── Bridge Process State ──
+_bridge_proc: Optional[asyncio.subprocess.Process] = None
+_request_id = 0
 _pending: dict[int, asyncio.Future] = {}
 _initialized = False
+_reader_task: Optional[asyncio.Task] = None
 
 
-async def get_bridge():
-    """Get or create WebSocket connection to BRP Bridge."""
-    global _bridge_ws
+async def ensure_bridge(bridge_path: str, ws_addr: str):
+    """Spawn BRP Bridge as a child process if not already running."""
+    global _bridge_proc, _reader_task
 
-    if _bridge_ws and _bridge_ws.open:
-        return _bridge_ws
+    if _bridge_proc and _bridge_proc.returncode is None:
+        return
 
-    log.info("Connecting to BRP Bridge at %s", _bridge_ws_url)
-    _bridge_ws = await websockets.connect(_bridge_ws_url)
-    log.info("Connected to BRP Bridge")
+    log.info("Spawning BRP Bridge: %s", bridge_path)
+    env = os.environ.copy()
+    env["BRP_WS_ADDR"] = ws_addr
 
-    # Start background message reader
-    asyncio.create_task(_read_bridge_messages())
+    _bridge_proc = await asyncio.create_subprocess_exec(
+        bridge_path,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+    log.info("Bridge started (PID=%d, WS=%s)", _bridge_proc.pid, ws_addr)
 
-    return _bridge_ws
+    # Start background reader for Bridge stdout
+    _reader_task = asyncio.create_task(_read_bridge_stdout())
 
 
-async def _read_bridge_messages():
-    """Background task: read messages from Bridge and resolve pending futures."""
-    global _bridge_ws
+async def _read_bridge_stdout():
+    """Read Native Messaging responses from Bridge's stdout."""
+    global _bridge_proc
     try:
-        async for raw in _bridge_ws:
-            msg = json.loads(raw)
+        while _bridge_proc and _bridge_proc.returncode is None:
+            # Read 4-byte length prefix
+            header = await _bridge_proc.stdout.readexactly(4)
+            length = struct.unpack("<I", header)[0]
 
-            # Response to a pending request?
+            # Read JSON payload
+            payload = await _bridge_proc.stdout.readexactly(length)
+            msg = json.loads(payload.decode("utf-8"))
+
             msg_id = msg.get("id")
             if msg_id is not None and msg_id in _pending:
                 future = _pending.pop(msg_id)
@@ -67,20 +83,33 @@ async def _read_bridge_messages():
                     future.set_result(msg)
                 continue
 
-            # Notification from Bridge → log it (could forward as MCP notification)
+            # Notification
             method = msg.get("method", "")
             if method.startswith("notification/"):
                 log.info("BRP notification: %s", method)
+            else:
+                log.debug("Unhandled bridge message: %s", msg)
+
+    except asyncio.IncompleteReadError:
+        log.warning("Bridge stdout closed")
     except Exception as e:
-        log.error("Bridge message reader error: %s", e)
-        _bridge_ws = None
+        log.error("Bridge reader error: %s", e)
+
+
+async def _send_to_bridge(msg: dict):
+    """Write a Native Messaging message to Bridge's stdin."""
+    payload = json.dumps(msg).encode("utf-8")
+    header = struct.pack("<I", len(payload))
+    _bridge_proc.stdin.write(header + payload)
+    await _bridge_proc.stdin.drain()
 
 
 async def brp_request(method: str, params: dict = None) -> dict:
     """Send a JSON-RPC request to BRP Bridge and wait for response."""
     global _request_id
 
-    ws = await get_bridge()
+    if not _bridge_proc or _bridge_proc.returncode is not None:
+        raise Exception("BRP Bridge is not running")
 
     _request_id += 1
     req_id = _request_id
@@ -96,7 +125,7 @@ async def brp_request(method: str, params: dict = None) -> dict:
     future = loop.create_future()
     _pending[req_id] = future
 
-    await ws.send(json.dumps(msg))
+    await _send_to_bridge(msg)
     log.info("BRP → %s (id=%d)", method, req_id)
 
     try:
@@ -139,11 +168,23 @@ async def ensure_initialized():
 
 mcp_server = FastMCP("BRP Browser Bridge")
 
+# Global config (set in main)
+_bridge_path = ""
+_ws_addr = "127.0.0.1:9817"
+
+
+async def _ready():
+    """Ensure Bridge is running and session is initialized."""
+    await ensure_bridge(_bridge_path, _ws_addr)
+    # Give Bridge a moment to start WS server
+    await asyncio.sleep(0.5)
+    await ensure_initialized()
+
 
 @mcp_server.tool()
 async def brp_tab_list() -> str:
     """List all open browser tabs with their IDs, titles, and URLs."""
-    await ensure_initialized()
+    await _ready()
     result = await brp_request("tab.list")
     tabs = result.get("tabs", [])
     lines = [f"Tab {t['tabId']}: {t.get('title', '?')} — {t.get('url', '?')}" + (" (active)" if t.get("active") else "") for t in tabs]
@@ -153,7 +194,7 @@ async def brp_tab_list() -> str:
 @mcp_server.tool()
 async def brp_tab_open(url: str) -> str:
     """Open a new browser tab at the given URL."""
-    await ensure_initialized()
+    await _ready()
     result = await brp_request("tab.open", {"url": url})
     return f"Opened tab {result.get('tabId', '?')} at {url}"
 
@@ -161,7 +202,7 @@ async def brp_tab_open(url: str) -> str:
 @mcp_server.tool()
 async def brp_tab_close(tab_id: int = None) -> str:
     """Close a browser tab by ID. Closes active tab if no ID given."""
-    await ensure_initialized()
+    await _ready()
     params = {}
     if tab_id is not None:
         params["tabId"] = tab_id
@@ -172,7 +213,7 @@ async def brp_tab_close(tab_id: int = None) -> str:
 @mcp_server.tool()
 async def brp_tab_select(tab_id: int = None, page_idx: int = None) -> str:
     """Switch to a browser tab by ID or index."""
-    await ensure_initialized()
+    await _ready()
     params = {}
     if tab_id is not None:
         params["tabId"] = tab_id
@@ -185,24 +226,23 @@ async def brp_tab_select(tab_id: int = None, page_idx: int = None) -> str:
 @mcp_server.tool()
 async def brp_navigate(url: str) -> str:
     """Navigate the active tab to a URL."""
-    await ensure_initialized()
+    await _ready()
     await brp_request("page.navigate", {"url": url})
     return f"Navigated to {url}"
 
 
 @mcp_server.tool()
 async def brp_snapshot() -> str:
-    """Get the Interaction Tree (ITree) of the current page — a structured representation of interactive elements."""
-    await ensure_initialized()
+    """Get the Interaction Tree (ITree) of the current page — a structured representation of interactive elements with roles, names, and nodeIds."""
+    await _ready()
     result = await brp_request("page.getInteractionTree")
-    # Format as readable text
     return _format_itree(result)
 
 
 @mcp_server.tool()
 async def brp_screenshot() -> str:
-    """Take a screenshot of the visible area of the active tab. Returns a data URL."""
-    await ensure_initialized()
+    """Take a screenshot of the visible area of the active tab. Returns info about the captured image."""
+    await _ready()
     result = await brp_request("page.screenshot")
     data_url = result.get("dataUrl", "")
     if data_url.startswith("data:image/png;base64,"):
@@ -213,7 +253,7 @@ async def brp_screenshot() -> str:
 @mcp_server.tool()
 async def brp_click(selector: str, selector_type: str = "css") -> str:
     """Click an element on the page. Selector types: css, xpath, text, nodeId."""
-    await ensure_initialized()
+    await _ready()
     sel = {"type": selector_type, "value": selector}
     result = await brp_request("element.click", {"selector": sel})
     if result.get("success"):
@@ -224,7 +264,7 @@ async def brp_click(selector: str, selector_type: str = "css") -> str:
 @mcp_server.tool()
 async def brp_type(selector: str, text: str, selector_type: str = "css") -> str:
     """Type text into an element character by character (simulates keyboard)."""
-    await ensure_initialized()
+    await _ready()
     sel = {"type": selector_type, "value": selector}
     result = await brp_request("element.type", {"selector": sel, "text": text})
     if result.get("success"):
@@ -235,7 +275,7 @@ async def brp_type(selector: str, text: str, selector_type: str = "css") -> str:
 @mcp_server.tool()
 async def brp_fill(selector: str, text: str, selector_type: str = "css") -> str:
     """Fill an input element directly (sets value without simulating keystrokes)."""
-    await ensure_initialized()
+    await _ready()
     sel = {"type": selector_type, "value": selector}
     result = await brp_request("element.fill", {"selector": sel, "text": text})
     if result.get("success"):
@@ -246,27 +286,27 @@ async def brp_fill(selector: str, text: str, selector_type: str = "css") -> str:
 @mcp_server.tool()
 async def brp_scroll(selector: str = None, selector_type: str = "css") -> str:
     """Scroll an element into view. If no selector, scrolls to top of page."""
-    await ensure_initialized()
+    await _ready()
     params = {}
     if selector:
         params["selector"] = {"type": selector_type, "value": selector}
     result = await brp_request("element.scroll", params)
     if result.get("success"):
-        return f"Scrolled element into view"
+        return "Scrolled element into view"
     return f"Scroll result: {json.dumps(result)}"
 
 
 @mcp_server.tool()
 async def brp_execute(code: str) -> str:
     """Execute JavaScript code in the active page context and return the result."""
-    await ensure_initialized()
+    await _ready()
     result = await brp_request("script.execute", {"code": code})
     if result.get("success"):
         return f"Script result: {json.dumps(result.get('result'), ensure_ascii=False)}"
     return f"Script error: {result.get('error', 'unknown')}"
 
 
-def _format_itree(data: dict, indent: int = 0) -> str:
+def _format_itree(data: dict) -> str:
     """Format Interaction Tree as human-readable text."""
     if not data:
         return "(empty tree)"
@@ -302,12 +342,10 @@ def _format_node(node: dict, lines: list, depth: int):
     if tag and tag != role:
         parts.append(f"<{tag}>")
 
-    # Show value for inputs
     val = node.get("value")
     if val:
         parts.append(f'val="{val[:50]}"')
 
-    # Show href for links
     href = node.get("href")
     if href:
         parts.append(f"→ {href[:80]}")
@@ -321,15 +359,32 @@ def _format_node(node: dict, lines: list, depth: int):
 # ── Main ──
 
 def main():
+    global _bridge_path, _ws_addr
+
     parser = argparse.ArgumentParser(description="BRP MCP Adapter")
-    parser.add_argument("--ws-url", default=None,
-                        help="BRP Bridge WebSocket URL (overrides BRP_WS_URL env)")
+    parser.add_argument("--bridge-path", default=None,
+                        help="Path to brp-bridge binary (overrides BRP_BRIDGE_PATH env)")
+    parser.add_argument("--ws-addr", default=None,
+                        help="Bridge WebSocket address (overrides BRP_WS_ADDR env)")
     args = parser.parse_args()
 
-    global _bridge_ws_url
-    _bridge_ws_url = args.ws_url or os.environ.get("BRP_WS_URL", "ws://127.0.0.1:9817")
+    _bridge_path = (
+        args.bridge_path
+        or os.environ.get("BRP_BRIDGE_PATH")
+        or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "bridge", "target", "release", "brp-bridge.exe")
+    )
+    _ws_addr = args.ws_addr or os.environ.get("BRP_WS_ADDR", "127.0.0.1:9817")
 
-    log.info("BRP MCP Adapter starting (bridge=%s)", _bridge_ws_url)
+    if not os.path.exists(_bridge_path):
+        log.error("Bridge binary not found at: %s", _bridge_path)
+        log.error("Build with: cd bridge && cargo build --release")
+        sys.exit(1)
+
+    log.info("BRP MCP Adapter starting")
+    log.info("  Bridge: %s", _bridge_path)
+    log.info("  WS addr: %s", _ws_addr)
+
     mcp_server.run(transport="stdio")
 
 
