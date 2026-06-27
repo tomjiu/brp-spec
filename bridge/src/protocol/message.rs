@@ -98,20 +98,6 @@ impl Response {
         }
     }
 
-    pub fn method_not_found(id: MessageId, method: &str) -> Self {
-        Self::error(
-            id,
-            ErrorResponse {
-                code: -32601,
-                message: format!("Method not found: {}", method),
-                data: Some(serde_json::json!({
-                    "errorCode": "BRP_METHOD_NOT_FOUND",
-                    "retriable": false
-                })),
-            },
-        )
-    }
-
     pub fn internal_error(id: MessageId, msg: &str) -> Self {
         Self::error(
             id,
@@ -119,21 +105,7 @@ impl Response {
                 code: -32603,
                 message: msg.to_string(),
                 data: Some(serde_json::json!({
-                    "errorCode": "BRP_INTERNAL_ERROR",
-                    "retriable": false
-                })),
-            },
-        )
-    }
-
-    pub fn invalid_params(id: MessageId, msg: &str) -> Self {
-        Self::error(
-            id,
-            ErrorResponse {
-                code: -32602,
-                message: msg.to_string(),
-                data: Some(serde_json::json!({
-                    "errorCode": "BRP_INVALID_PARAMS",
+                    "errorCode": error_codes::BRP_INTERNAL_ERROR,
                     "retriable": false
                 })),
             },
@@ -171,30 +143,11 @@ impl Notification {
     }
 }
 
-// ─── Incoming Message (tagged union) ───
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum IncomingMessage {
-    /// Has id + method → Request
-    Request(Request),
-    /// Has id + (result | error) → Response (from extension)
-    Response(Response),
-    /// Has method, no id → Notification (from extension)
-    Notification(Notification),
-}
-
 // ─── BRP Error Codes (RFC0001 §18) ───
 
 pub mod error_codes {
-    pub const BRP_SESSION_CLOSED: &str = "BRP_SESSION_CLOSED";
     pub const BRP_SESSION_UNINITIALIZED: &str = "BRP_SESSION_UNINITIALIZED";
-    pub const BRP_SESSION_VERSION_MISMATCH: &str = "BRP_SESSION_VERSION_MISMATCH";
-    pub const BRP_TARGET_NOT_FOUND: &str = "BRP_TARGET_NOT_FOUND";
-    pub const BRP_ELEMENT_INTERSECTED: &str = "BRP_ELEMENT_INTERSECTED";
     pub const BRP_PERMISSION_DENIED: &str = "BRP_PERMISSION_DENIED";
-    pub const BRP_CONTEXT_DESTROYED: &str = "BRP_CONTEXT_DESTROYED";
-    pub const BRP_EVENT_SEQUENCE_LOST: &str = "BRP_EVENT_SEQUENCE_LOST";
     pub const BRP_METHOD_NOT_FOUND: &str = "BRP_METHOD_NOT_FOUND";
     pub const BRP_INTERNAL_ERROR: &str = "BRP_INTERNAL_ERROR";
 }

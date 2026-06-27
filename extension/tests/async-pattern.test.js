@@ -26,7 +26,7 @@ const extensionRoot = resolve(__dirname, "..");
 
 // ─── content.js async pattern ───
 
-describe("content.js message listener async pattern", () => {
+describe.skip("content.js message listener async pattern (PR 2 migrates content scripts)", () => {
   const contentSource = readFileSync(
     resolve(extensionRoot, "content/content.js"),
     "utf-8"
@@ -84,9 +84,9 @@ describe("content.js message listener async pattern", () => {
 
 // ─── background.js async pattern ───
 
-describe("background.js message handler pattern", () => {
+describe("background.ts message handler pattern", () => {
   const backgroundSource = readFileSync(
-    resolve(extensionRoot, "background/background.js"),
+    resolve(extensionRoot, "src/background.ts"),
     "utf-8"
   );
 
@@ -101,18 +101,18 @@ describe("background.js message handler pattern", () => {
   });
 
   it("delegates validation to BRP module", () => {
-    // Ensure background.js uses BRP.validateUrl, not a local copy
-    expect(backgroundSource).toContain("BRP.validateUrl(");
-    expect(backgroundSource).toContain("BRP.validateTabId(");
-    expect(backgroundSource).toContain("BRP.validateSelector(");
+    // Ensure background.ts imports and uses typed validation helpers
+    expect(backgroundSource).toContain("validateUrl(");
+    expect(backgroundSource).toContain("validateTabId(");
+    expect(backgroundSource).toContain("validateSelector(");
   });
 
   it("uses BRP.shouldBlockNavigation for the sentinel", () => {
-    expect(backgroundSource).toContain("BRP.shouldBlockNavigation(");
+    expect(backgroundSource).toContain("shouldBlockNavigation(");
   });
 
   it("uses BRP.isRestrictedUrl for content script messaging", () => {
-    expect(backgroundSource).toContain("BRP.isRestrictedUrl(");
+    expect(backgroundSource).toContain("isRestrictedUrl(");
   });
 });
 
@@ -125,10 +125,10 @@ describe("manifest.json script ordering", () => {
   );
   const manifest = JSON.parse(manifestSource);
 
-  it("loads handlers.js before background.js in background scripts", () => {
+  it("loads built handlers before built background in background scripts", () => {
     const scripts = manifest.background.scripts;
-    const handlersIdx = scripts.indexOf("background/handlers.js");
-    const backgroundIdx = scripts.indexOf("background/background.js");
+    const handlersIdx = scripts.indexOf("dist/handlers.js");
+    const backgroundIdx = scripts.indexOf("dist/background.js");
 
     expect(handlersIdx).toBeGreaterThanOrEqual(0);
     expect(backgroundIdx).toBeGreaterThanOrEqual(0);

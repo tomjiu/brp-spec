@@ -474,7 +474,7 @@ async fn handle_request(req: Request, state: Arc<RwLock<BridgeState>>) -> Respon
                         code: -32601,
                         message: format!("Unknown method: {}", method),
                         data: Some(json!({
-                            "errorCode": "BRP_METHOD_NOT_FOUND",
+                            "errorCode": error_codes::BRP_METHOD_NOT_FOUND,
                             "retriable": false
                         })),
                     },
@@ -513,7 +513,7 @@ async fn handle_request(req: Request, state: Arc<RwLock<BridgeState>>) -> Respon
                     code: -32602,
                     message: "script.execute is disabled by default. Set BRP_ALLOW_SCRIPT_EXECUTE=1 to enable.".into(),
                     data: Some(json!({
-                        "errorCode": "BRP_PERMISSION_DENIED",
+                        "errorCode": error_codes::BRP_PERMISSION_DENIED,
                         "retriable": false,
                         "recoveryHint": "Set environment variable BRP_ALLOW_SCRIPT_EXECUTE=1 before starting the Bridge"
                     })),

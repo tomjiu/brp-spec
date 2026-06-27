@@ -1,26 +1,12 @@
 /**
- * Tests for BRP pure logic module (background/handlers.js)
+ * Tests for BRP pure logic module (src/handlers.ts)
  *
  * Covers: input validation, URL classification, navigation sentinel,
  * tab tracking, message routing, and initialize handler.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-
-// handlers.js uses a CJS/global module pattern for Firefox MV2 compatibility.
-// Load it by executing the source in a controlled scope to extract the BRP object.
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const handlersSource = readFileSync(
-  resolve(__dirname, "../background/handlers.js"),
-  "utf-8"
-);
-const moduleObj = { exports: {} };
-const loadModule = new Function("module", "exports", handlersSource);
-loadModule(moduleObj, moduleObj.exports);
-const BRP = moduleObj.exports;
+const BRP = await import("../src/handlers.ts");
 
 // --- Input Validation ---
 
