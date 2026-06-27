@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /// BRP JSON-RPC 2.0 Message Types
 ///
 /// Implements the Message Model defined in RFC0001 §9:
@@ -5,7 +7,6 @@
 /// - Response (bridge → client)
 /// - Notification (bridge → client, no id)
 /// - Error Response (bridge → client, with structured error)
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

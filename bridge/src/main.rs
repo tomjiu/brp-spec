@@ -13,19 +13,20 @@
 /// TODO(v0.3.2): Further modularization — extract:
 ///   - `validation.rs`: URL scheme validation, selector length checks, tabId range checks
 ///   - `config.rs`: environment variable reading and defaults (timeouts, ports, feature gates)
+///
 /// Security (v0.3.0):
 /// - WebSocket Origin validation (rejects non-extension origins)
 /// - Server-side connection rate limiting (pre-upgrade)
 /// - JSON-RPC message size / depth limits
 /// - Optional token auth (Standalone mode: BRP_AUTH_TOKEN env var or extension Options page)
 /// - Constant-time credential comparison via `subtle::ConstantTimeEq`
-
 mod auth;
 mod protocol;
 mod ratelimit;
 mod transport;
 
 use auth::*;
+use futures_util::{SinkExt, StreamExt};
 use protocol::*;
 use ratelimit::*;
 use serde_json::{json, Value};
@@ -34,15 +35,18 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
-use futures_util::{SinkExt, StreamExt};
 
 // ─── Types ───
 
 /// Sender half of the extension WebSocket connection
-type ExtSender = Arc<Mutex<futures_util::stream::SplitSink<
-    tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
-    WsMessage,
->>>;
+type ExtSender = Arc<
+    Mutex<
+        futures_util::stream::SplitSink<
+            tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+            WsMessage,
+        >,
+    >,
+>;
 
 // ─── Global State ───
 
@@ -87,7 +91,10 @@ impl BridgeState {
             self.extensions.get(id).map(|s| (id, s.clone()))
         } else {
             // Return first available extension
-            self.extensions.iter().next().map(|(id, s)| (id.as_str(), s.clone()))
+            self.extensions
+                .iter()
+                .next()
+                .map(|(id, s)| (id.as_str(), s.clone()))
         }
     }
 }
@@ -120,7 +127,11 @@ async fn run_ws_server(
                 {
                     let mut rl = rate_limiter.lock().await;
                     if let Err(reason) = rl.check_connection() {
-                        log::warn!("[WsServer] Rate limited connection from {}: {}", peer, reason);
+                        log::warn!(
+                            "[WsServer] Rate limited connection from {}: {}",
+                            peer,
+                            reason
+                        );
                         // Close TCP connection immediately (no WS upgrade)
                         drop(stream);
                         continue;
@@ -136,10 +147,8 @@ async fn run_ws_server(
                 tokio::spawn(async move {
                     // ── Origin validation (before WS upgrade) ──
                     // We use a custom accept callback to check the Origin header
-                    let ws_result = tokio_tungstenite::accept_hdr_async(
-                        stream,
-                        OriginValidator,
-                    ).await;
+                    let ws_result =
+                        tokio_tungstenite::accept_hdr_async(stream, OriginValidator).await;
 
                     match ws_result {
                         Ok(ws_stream) => {
@@ -148,12 +157,17 @@ async fn run_ws_server(
                             // Wait for registration message
                             let browser_id = match tokio::time::timeout(
                                 std::time::Duration::from_secs(10),
-                                receiver.next()
-                            ).await {
+                                receiver.next(),
+                            )
+                            .await
+                            {
                                 Ok(Some(Ok(WsMessage::Text(text)))) => {
                                     // Check message size
                                     if text.len() > MAX_MESSAGE_SIZE {
-                                        log::warn!("[WsServer] Registration message too large from {}", peer);
+                                        log::warn!(
+                                            "[WsServer] Registration message too large from {}",
+                                            peer
+                                        );
                                         let _ = tx.send(WsMessage::Close(None)).await;
                                         rate_limiter.lock().await.on_auth_failed();
                                         return;
@@ -169,9 +183,12 @@ async fn run_ws_server(
                                                 return;
                                             }
 
-                                            if v.get("method").and_then(|m| m.as_str()) == Some("register") {
+                                            if v.get("method").and_then(|m| m.as_str())
+                                                == Some("register")
+                                            {
                                                 // ── Token validation (always required) ──
-                                                let provided_token = v.get("params")
+                                                let provided_token = v
+                                                    .get("params")
                                                     .and_then(|p| p.get("token"))
                                                     .and_then(|t| t.as_str())
                                                     .unwrap_or("");
@@ -185,13 +202,18 @@ async fn run_ws_server(
                                                             "message": "Authentication failed: invalid token"
                                                         }
                                                     });
-                                                    let _ = tx.send(WsMessage::Text(err_msg.to_string().into())).await;
+                                                    let _ = tx
+                                                        .send(WsMessage::Text(
+                                                            err_msg.to_string().into(),
+                                                        ))
+                                                        .await;
                                                     let _ = tx.send(WsMessage::Close(None)).await;
                                                     rate_limiter.lock().await.on_auth_failed();
                                                     return;
                                                 }
 
-                                                let bid = v.get("params")
+                                                let bid = v
+                                                    .get("params")
                                                     .and_then(|p| p.get("browserId"))
                                                     .and_then(|b| b.as_str())
                                                     .unwrap_or("unknown")
@@ -210,7 +232,10 @@ async fn run_ws_server(
                                             }
                                         }
                                         Err(_) => {
-                                            log::warn!("[WsServer] Invalid JSON in registration from {}", peer);
+                                            log::warn!(
+                                                "[WsServer] Invalid JSON in registration from {}",
+                                                peer
+                                            );
                                             let _ = tx.send(WsMessage::Close(None)).await;
                                             rate_limiter.lock().await.on_auth_failed();
                                             return;
@@ -223,7 +248,10 @@ async fn run_ws_server(
                                     return;
                                 }
                                 Ok(_) => {
-                                    log::warn!("[WsServer] Connection closed before registration from {}", peer);
+                                    log::warn!(
+                                        "[WsServer] Connection closed before registration from {}",
+                                        peer
+                                    );
                                     rate_limiter.lock().await.on_auth_failed();
                                     return;
                                 }
@@ -244,7 +272,8 @@ async fn run_ws_server(
                             }
 
                             // Handle incoming messages from extension
-                            handle_ext_messages(&browser_id, receiver, state.clone(), notify_tx).await;
+                            handle_ext_messages(&browser_id, receiver, state.clone(), notify_tx)
+                                .await;
 
                             // Extension disconnected — fail all pending requests for this browser
                             {
@@ -252,21 +281,27 @@ async fn run_ws_server(
                                 s.remove_extension(&browser_id);
 
                                 // Fail all pending requests for this browser immediately
-                                let failed_ids: Vec<i64> = s.pending.iter()
+                                let failed_ids: Vec<i64> = s
+                                    .pending
+                                    .iter()
                                     .filter(|(_, (_, _, bid))| bid == &browser_id)
                                     .map(|(id, _)| *id)
                                     .collect();
 
                                 for ext_id in failed_ids {
                                     if let Some((client_id, tx, _)) = s.pending.remove(&ext_id) {
-                                        let err_resp = Response::error(client_id, ErrorResponse {
-                                            code: -32001,
-                                            message: "Extension disconnected during request".into(),
-                                            data: Some(json!({
-                                                "errorCode": "BRP_EXTENSION_DISCONNECTED",
-                                                "retriable": true
-                                            })),
-                                        });
+                                        let err_resp = Response::error(
+                                            client_id,
+                                            ErrorResponse {
+                                                code: -32001,
+                                                message: "Extension disconnected during request"
+                                                    .into(),
+                                                data: Some(json!({
+                                                    "errorCode": "BRP_EXTENSION_DISCONNECTED",
+                                                    "retriable": true
+                                                })),
+                                            },
+                                        );
                                         let _ = tx.send(err_resp);
                                     }
                                 }
@@ -302,7 +337,11 @@ async fn handle_ext_messages(
             Ok(WsMessage::Text(text)) => {
                 // ── Message size limit ──
                 if text.len() > MAX_MESSAGE_SIZE {
-                    log::warn!("[{}] Message too large ({} bytes), dropping", browser_id, text.len());
+                    log::warn!(
+                        "[{}] Message too large ({} bytes), dropping",
+                        browser_id,
+                        text.len()
+                    );
                     continue;
                 }
 
@@ -336,7 +375,11 @@ async fn handle_ext_messages(
                                     let _ = tx.send(response);
                                 }
                             } else {
-                                log::debug!("[{}] No pending request for ext_id={}", browser_id, id_num);
+                                log::debug!(
+                                    "[{}] No pending request for ext_id={}",
+                                    browser_id,
+                                    id_num
+                                );
                             }
                             continue;
                         }
@@ -383,9 +426,9 @@ async fn handle_request(req: Request, state: Arc<RwLock<BridgeState>>) -> Respon
 
     match method.as_str() {
         // ── Lifecycle: handled locally ──
-
         "initialize" => {
-            let params: InitializeParams = req.params
+            let params: InitializeParams = req
+                .params
                 .as_ref()
                 .and_then(|p| serde_json::from_value(p.clone()).ok())
                 .unwrap_or(InitializeParams {
@@ -413,31 +456,37 @@ async fn handle_request(req: Request, state: Arc<RwLock<BridgeState>>) -> Respon
 
         "browser.list" => {
             let s = state.read().await;
-            let browsers: Vec<Value> = s.extensions.keys()
+            let browsers: Vec<Value> = s
+                .extensions
+                .keys()
                 .map(|id| json!({ "browserId": id }))
                 .collect();
             Response::success(id, json!({ "browsers": browsers, "count": browsers.len() }))
         }
 
         // ── All other methods: forward to extension ──
-
         _ => {
             // ── Method whitelist ──
             if !ALLOWED_METHODS.contains(&method.as_str()) {
-                return Response::error(id, ErrorResponse {
-                    code: -32601,
-                    message: format!("Unknown method: {}", method).into(),
-                    data: Some(json!({
-                        "errorCode": "BRP_METHOD_NOT_FOUND",
-                        "retriable": false
-                    })),
-                });
+                return Response::error(
+                    id,
+                    ErrorResponse {
+                        code: -32601,
+                        message: format!("Unknown method: {}", method),
+                        data: Some(json!({
+                            "errorCode": "BRP_METHOD_NOT_FOUND",
+                            "retriable": false
+                        })),
+                    },
+                );
             }
 
             // ── URL scheme validation (defense in depth — extension also validates) ──
             if method == "page.navigate" || method == "tab.open" {
                 if let Some(ref params) = req.params {
-                    let url = params.get("url").or_else(|| params.get("uri"))
+                    let url = params
+                        .get("url")
+                        .or_else(|| params.get("uri"))
                         .and_then(|u| u.as_str())
                         .unwrap_or("");
                     if !url.is_empty() {
@@ -447,7 +496,7 @@ async fn handle_request(req: Request, state: Arc<RwLock<BridgeState>>) -> Respon
                         if !is_safe {
                             return Response::error(id, ErrorResponse {
                                 code: -32602,
-                                message: format!("Blocked URL scheme (only http(s) and about:blank allowed): {}", url).into(),
+                                message: format!("Blocked URL scheme (only http(s) and about:blank allowed): {}", url),
                                 data: Some(json!({
                                     "errorCode": "BRP_URL_SCHEME_BLOCKED",
                                     "retriable": false
@@ -459,32 +508,33 @@ async fn handle_request(req: Request, state: Arc<RwLock<BridgeState>>) -> Respon
             }
 
             // ── script.execute gate (off by default) ──
-            if method == "script.execute" {
-                if !is_script_execute_allowed() {
-                    return Response::error(id, ErrorResponse {
-                        code: -32602,
-                        message: "script.execute is disabled by default. Set BRP_ALLOW_SCRIPT_EXECUTE=1 to enable.".into(),
-                        data: Some(json!({
-                            "errorCode": "BRP_PERMISSION_DENIED",
-                            "retriable": false,
-                            "recoveryHint": "Set environment variable BRP_ALLOW_SCRIPT_EXECUTE=1 before starting the Bridge"
-                        })),
-                    });
-                }
+            if method == "script.execute" && !is_script_execute_allowed() {
+                return Response::error(id, ErrorResponse {
+                    code: -32602,
+                    message: "script.execute is disabled by default. Set BRP_ALLOW_SCRIPT_EXECUTE=1 to enable.".into(),
+                    data: Some(json!({
+                        "errorCode": "BRP_PERMISSION_DENIED",
+                        "retriable": false,
+                        "recoveryHint": "Set environment variable BRP_ALLOW_SCRIPT_EXECUTE=1 before starting the Bridge"
+                    })),
+                });
             }
 
             // Check session state
             {
                 let s = state.read().await;
                 if !s.session.is_ready() {
-                    return Response::error(id, ErrorResponse {
-                        code: -32002,
-                        message: "Session not initialized".into(),
-                        data: Some(json!({
-                            "errorCode": error_codes::BRP_SESSION_UNINITIALIZED,
-                            "retriable": false
-                        })),
-                    });
+                    return Response::error(
+                        id,
+                        ErrorResponse {
+                            code: -32002,
+                            message: "Session not initialized".into(),
+                            data: Some(json!({
+                                "errorCode": error_codes::BRP_SESSION_UNINITIALIZED,
+                                "retriable": false
+                            })),
+                        },
+                    );
                 }
             }
 
@@ -495,7 +545,9 @@ async fn handle_request(req: Request, state: Arc<RwLock<BridgeState>>) -> Respon
 
 async fn forward_to_extension(req: Request, state: Arc<RwLock<BridgeState>>) -> Response {
     // Extract optional browserId from params for routing
-    let target_browser = req.params.as_ref()
+    let target_browser = req
+        .params
+        .as_ref()
         .and_then(|p| p.get("browserId"))
         .and_then(|b| b.as_str())
         .map(|s| s.to_string());
@@ -506,15 +558,18 @@ async fn forward_to_extension(req: Request, state: Arc<RwLock<BridgeState>>) -> 
         let (bid, sender) = match s.get_sender(target_browser.as_deref()) {
             Some((id, s)) => (id.to_string(), s),
             None => {
-                return Response::error(req.id.clone(), ErrorResponse {
-                    code: -32001,
-                    message: "No extension connected".into(),
-                    data: Some(json!({
-                        "errorCode": "BRP_EXTENSION_DISCONNECTED",
-                        "retriable": true,
-                        "recoveryHint": "Install the BRP extension in Firefox/Zen and ensure it is running"
-                    })),
-                });
+                return Response::error(
+                    req.id.clone(),
+                    ErrorResponse {
+                        code: -32001,
+                        message: "No extension connected".into(),
+                        data: Some(json!({
+                            "errorCode": "BRP_EXTENSION_DISCONNECTED",
+                            "retriable": true,
+                            "recoveryHint": "Install the BRP extension in Firefox/Zen and ensure it is running"
+                        })),
+                    },
+                );
             }
         };
 
@@ -525,7 +580,12 @@ async fn forward_to_extension(req: Request, state: Arc<RwLock<BridgeState>>) -> 
         (sender, ext_id, rx, bid)
     };
 
-    log::info!("[Bridge] → {} to {} (ext_id={})", req.method, browser_id, ext_id);
+    log::info!(
+        "[Bridge] → {} to {} (ext_id={})",
+        req.method,
+        browser_id,
+        ext_id
+    );
 
     // Build params without browserId (it's for routing only, not forwarded)
     let mut params = req.params.unwrap_or(json!({}));
@@ -545,19 +605,27 @@ async fn forward_to_extension(req: Request, state: Arc<RwLock<BridgeState>>) -> 
     if ext_msg_str.len() > MAX_MESSAGE_SIZE {
         let mut s = state.write().await;
         s.pending.remove(&ext_id);
-        return Response::error(req.id, ErrorResponse {
-            code: -32000,
-            message: "Request too large to forward".into(),
-            data: Some(json!({
-                "errorCode": "BRP_MESSAGE_TOO_LARGE",
-                "retriable": false,
-                "size": ext_msg_str.len(),
-                "maxSize": MAX_MESSAGE_SIZE
-            })),
-        });
+        return Response::error(
+            req.id,
+            ErrorResponse {
+                code: -32000,
+                message: "Request too large to forward".into(),
+                data: Some(json!({
+                    "errorCode": "BRP_MESSAGE_TOO_LARGE",
+                    "retriable": false,
+                    "size": ext_msg_str.len(),
+                    "maxSize": MAX_MESSAGE_SIZE
+                })),
+            },
+        );
     }
 
-    if let Err(e) = ext_sender.lock().await.send(WsMessage::Text(ext_msg_str.into())).await {
+    if let Err(e) = ext_sender
+        .lock()
+        .await
+        .send(WsMessage::Text(ext_msg_str.into()))
+        .await
+    {
         let mut s = state.write().await;
         s.pending.remove(&ext_id);
         return Response::internal_error(req.id, &format!("Extension send failed: {}", e));
@@ -566,9 +634,7 @@ async fn forward_to_extension(req: Request, state: Arc<RwLock<BridgeState>>) -> 
     // ── Dynamic forwarding timeout ──
     // Use client-specified timeout + buffer, with a minimum of 30s.
     // This fixes the conflict between the 30s Bridge timeout and 60s waitForSelector cap.
-    let client_timeout_ms = params.get("timeout")
-        .and_then(|t| t.as_u64())
-        .unwrap_or(0);
+    let client_timeout_ms = params.get("timeout").and_then(|t| t.as_u64()).unwrap_or(0);
     let timeout_secs = std::cmp::max(
         30,
         (client_timeout_ms / 1000) + 10, // client timeout + 10s buffer
@@ -584,14 +650,17 @@ async fn forward_to_extension(req: Request, state: Arc<RwLock<BridgeState>>) -> 
         Err(_) => {
             let mut s = state.write().await;
             s.pending.remove(&ext_id);
-            Response::error(req.id, ErrorResponse {
-                code: -32000,
-                message: format!("Extension request timed out ({}s)", timeout_secs).into(),
-                data: Some(json!({
-                    "errorCode": "BRP_TIMEOUT",
-                    "retriable": true
-                })),
-            })
+            Response::error(
+                req.id,
+                ErrorResponse {
+                    code: -32000,
+                    message: format!("Extension request timed out ({}s)", timeout_secs),
+                    data: Some(json!({
+                        "errorCode": "BRP_TIMEOUT",
+                        "retriable": true
+                    })),
+                },
+            )
         }
     }
 }
@@ -600,11 +669,9 @@ async fn forward_to_extension(req: Request, state: Arc<RwLock<BridgeState>>) -> 
 
 #[tokio::main]
 async fn main() {
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info"),
-    )
-    .format_timestamp_millis()
-    .init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_millis()
+        .init();
 
     log::info!("═══ BRP Bridge v{} ═══", env!("CARGO_PKG_VERSION"));
 
@@ -646,7 +713,7 @@ async fn main() {
                 }
                 log::info!("[Auth] Auto-generated token: configure in Extension Options page");
                 token
-            })
+            }),
     );
 
     log::info!("[Auth] Token authentication ENABLED (mandatory)");
@@ -659,7 +726,9 @@ async fn main() {
         #[cfg(target_os = "windows")]
         {
             if let Ok(appdata) = std::env::var("APPDATA") {
-                return std::path::PathBuf::from(appdata).join("brp-bridge").join("token");
+                return std::path::PathBuf::from(appdata)
+                    .join("brp-bridge")
+                    .join("token");
             }
         }
         if let Ok(home) = std::env::var("HOME") {
@@ -674,8 +743,7 @@ async fn main() {
     let (request_tx, mut request_rx) = mpsc::channel::<Request>(32);
 
     // ── WebSocket Server for Firefox Extension ──
-    let ws_addr = std::env::var("BRP_WS_ADDR")
-        .unwrap_or_else(|_| "127.0.0.1:9817".into());
+    let ws_addr = std::env::var("BRP_WS_ADDR").unwrap_or_else(|_| "127.0.0.1:9817".into());
 
     {
         let state = state.clone();
@@ -715,7 +783,10 @@ async fn main() {
                     // ── Inbound message size check ──
                     let msg_str = value.to_string();
                     if msg_str.len() > MAX_MESSAGE_SIZE {
-                        log::warn!("[Stdin] Message too large ({} bytes), dropping", msg_str.len());
+                        log::warn!(
+                            "[Stdin] Message too large ({} bytes), dropping",
+                            msg_str.len()
+                        );
                         continue;
                     }
 
