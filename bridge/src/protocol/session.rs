@@ -1,10 +1,7 @@
 /// BRP Session Lifecycle (RFC0001 §10)
 ///
 /// States: Disconnected → Connecting → Authenticating → Ready → Busy → Closing → Closed
-
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::HashMap;
 use uuid::Uuid;
 
 // ─── Session State ───
@@ -176,10 +173,6 @@ impl SequenceCounter {
         self.current += 1;
         self.current
     }
-
-    pub fn current(&self) -> u64 {
-        self.current
-    }
 }
 
 // ─── Session ───
@@ -192,7 +185,6 @@ pub struct Session {
     pub client_info: Option<ClientInfo>,
     pub capabilities: Capabilities,
     pub sequence: SequenceCounter,
-    pub extra: HashMap<String, Value>,
 }
 
 impl Session {
@@ -205,7 +197,6 @@ impl Session {
             client_info: None,
             capabilities: Capabilities::bridge_default(),
             sequence: SequenceCounter::new(),
-            extra: HashMap::new(),
         }
     }
 

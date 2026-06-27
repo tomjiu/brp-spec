@@ -81,17 +81,50 @@ jobs:
         run: cargo deny check
 
   # ---------------------------------------------------------------------------
+  # Extension: Typecheck, Build, Test
+  # ---------------------------------------------------------------------------
+  extension:
+    name: Extension CI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extension
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run typecheck
+        run: npm run typecheck
+
+      - name: Build extension
+        run: npm run build
+
+      - name: Run extension tests
+        run: npm test
+
+  # ---------------------------------------------------------------------------
   # Summary: Required checks pass if all above succeed
   # ---------------------------------------------------------------------------
   ci-pass:
     name: CI Passed
     if: always()
-    needs: [rust]
+    needs: [rust, extension]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
         run: |
-          if [[ "${{ needs.rust.result }}" != "success" ]]; then
+          if [[ "${{ needs.rust.result }}" != "success" || "${{ needs.extension.result }}" != "success" ]]; then
             echo "One or more jobs failed."
             exit 1
           fi

@@ -167,6 +167,20 @@
     ]);
     return isJsonValue(response) ? response : null;
   }
+  function isJsonRpcRequest(value) {
+    if (!isJsonObject(value)) return false;
+    const id = value.id;
+    const method = value.method;
+    const params = value.params;
+    const error = value.error;
+    const jsonrpc = value.jsonrpc;
+    const hasValidId = id === void 0 || id === null || typeof id === "string" || typeof id === "number";
+    const hasValidMethod = method === void 0 || method === null || typeof method === "string";
+    const hasValidParams = params === void 0 || params === null || isJsonObject(params);
+    const hasValidError = error === void 0 || error === null || isJsonObject(error);
+    const hasValidJsonrpc = jsonrpc === void 0 || jsonrpc === null || jsonrpc === "2.0";
+    return hasValidId && hasValidMethod && hasValidParams && hasValidError && hasValidJsonrpc;
+  }
   function connect() {
     if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
       return;
@@ -206,7 +220,7 @@
     ws.onmessage = (event) => {
       try {
         const parsed = JSON.parse(event.data);
-        if (!isJsonObject(parsed)) return;
+        if (!isJsonRpcRequest(parsed)) return;
         const msg = parsed;
         if (!authenticated && isJsonObject(msg.error)) {
           console.error("[BRP] Bridge rejected registration:", getString(msg.error, "message"));
@@ -252,10 +266,10 @@
     }
   }
   async function handleRequest(msg) {
-    if (msg.id === void 0 || !msg.method) return;
+    if (msg.id === void 0 || msg.id === null || !msg.method) return;
     const id = msg.id;
     const method = msg.method;
-    const params = msg.params;
+    const params = msg.params ?? void 0;
     try {
       let result;
       switch (method) {

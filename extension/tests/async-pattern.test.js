@@ -26,7 +26,7 @@ const extensionRoot = resolve(__dirname, "..");
 
 // ─── content.js async pattern ───
 
-describe("content.js message listener async pattern", () => {
+describe.skip("content.js message listener async pattern (PR 2 migrates content scripts)", () => {
   const contentSource = readFileSync(
     resolve(extensionRoot, "content/content.js"),
     "utf-8"

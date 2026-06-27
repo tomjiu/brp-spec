@@ -2,7 +2,6 @@
 ///
 /// Contains origin validation, JSON depth/size limits, constant-time token
 /// comparison, the method whitelist, and the script.execute gate.
-
 use serde_json::Value;
 use subtle::ConstantTimeEq;
 
@@ -22,11 +21,24 @@ pub const MAX_OBJECT_KEYS: usize = 256;
 
 /// Whitelist of JSON-RPC methods that the bridge will forward to the extension.
 pub const ALLOWED_METHODS: &[&str] = &[
-    "tab.list", "tab.open", "tab.close", "tab.select",
-    "page.navigate", "page.getInteractionTree", "page.screenshot",
-    "page.goBack", "page.goForward", "page.reload", "page.waitForSelector",
-    "element.click", "element.type", "element.fill", "element.scroll",
-    "element.hover", "element.select", "element.getAttribute",
+    "tab.list",
+    "tab.open",
+    "tab.close",
+    "tab.select",
+    "page.navigate",
+    "page.getInteractionTree",
+    "page.screenshot",
+    "page.goBack",
+    "page.goForward",
+    "page.reload",
+    "page.waitForSelector",
+    "element.click",
+    "element.type",
+    "element.fill",
+    "element.scroll",
+    "element.hover",
+    "element.select",
+    "element.getAttribute",
     "keyboard.press",
     "script.execute",
 ];
@@ -101,15 +113,19 @@ impl tokio_tungstenite::tungstenite::handshake::server::Callback for OriginValid
         self,
         request: &tokio_tungstenite::tungstenite::handshake::server::Request,
         response: tokio_tungstenite::tungstenite::handshake::server::Response,
-    ) -> Result<tokio_tungstenite::tungstenite::handshake::server::Response, tokio_tungstenite::tungstenite::handshake::server::ErrorResponse> {
-        let origin = request.headers()
+    ) -> Result<
+        tokio_tungstenite::tungstenite::handshake::server::Response,
+        tokio_tungstenite::tungstenite::handshake::server::ErrorResponse,
+    > {
+        let origin = request
+            .headers()
             .get("origin")
             .and_then(|v| v.to_str().ok());
 
         if !is_valid_origin(origin) {
             log::warn!("[WsServer] REJECTED Origin: {:?}", origin);
             let err = tokio_tungstenite::tungstenite::handshake::server::ErrorResponse::new(Some(
-                "Invalid Origin".to_string()
+                "Invalid Origin".to_string(),
             ));
             return Err(err);
         }
@@ -139,7 +155,10 @@ mod tests {
     fn test_secure_compare_equal() {
         assert!(secure_compare("hello", "hello"));
         assert!(secure_compare("", ""));
-        assert!(secure_compare("a-long-token-value-12345", "a-long-token-value-12345"));
+        assert!(secure_compare(
+            "a-long-token-value-12345",
+            "a-long-token-value-12345"
+        ));
     }
 
     #[test]

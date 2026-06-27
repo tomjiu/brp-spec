@@ -63,6 +63,21 @@ async function sendToContentScript(
   return isJsonValue(response) ? response : null;
 }
 
+function isJsonRpcRequest(value: unknown): value is JsonRpcRequest {
+  if (!isJsonObject(value)) return false;
+  const id = value.id;
+  const method = value.method;
+  const params = value.params;
+  const error = value.error;
+  const jsonrpc = value.jsonrpc;
+  const hasValidId = id === undefined || id === null || typeof id === "string" || typeof id === "number";
+  const hasValidMethod = method === undefined || method === null || typeof method === "string";
+  const hasValidParams = params === undefined || params === null || isJsonObject(params);
+  const hasValidError = error === undefined || error === null || isJsonObject(error);
+  const hasValidJsonrpc = jsonrpc === undefined || jsonrpc === null || jsonrpc === "2.0";
+  return hasValidId && hasValidMethod && hasValidParams && hasValidError && hasValidJsonrpc;
+}
+
 function connect(): void {
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
     return;
@@ -108,8 +123,8 @@ function connect(): void {
   ws.onmessage = (event: MessageEvent<string>): void => {
     try {
       const parsed: unknown = JSON.parse(event.data);
-      if (!isJsonObject(parsed)) return;
-      const msg = parsed as JsonRpcRequest;
+      if (!isJsonRpcRequest(parsed)) return;
+      const msg = parsed;
 
       if (!authenticated && isJsonObject(msg.error)) {
         console.error("[BRP] Bridge rejected registration:", getString(msg.error, "message"));
@@ -166,10 +181,10 @@ function sendToBridge(msg: BridgeMessage): void {
 }
 
 async function handleRequest(msg: JsonRpcRequest): Promise<void> {
-  if (msg.id === undefined || !msg.method) return;
+  if (msg.id === undefined || msg.id === null || !msg.method) return;
   const id = msg.id;
   const method = msg.method;
-  const params = msg.params;
+  const params = msg.params ?? undefined;
 
   try {
     let result: JsonValue;

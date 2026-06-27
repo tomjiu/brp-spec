@@ -9,7 +9,6 @@
 /// timeout (default 10s) could briefly saturate the slot, blocking legitimate
 /// new connections. This is acceptable for MVP. Future mitigation: dynamic
 /// timeout reduction under load, or per-IP rate limiting.
-
 use std::time::Instant;
 
 // ─── Constants ───
@@ -44,7 +43,8 @@ impl RateLimiter {
         let now = Instant::now();
 
         // Prune entries older than 1 second
-        self.recent_connections.retain(|t| now.duration_since(*t).as_secs_f64() < 1.0);
+        self.recent_connections
+            .retain(|t| now.duration_since(*t).as_secs_f64() < 1.0);
 
         // Check connections per second
         if self.recent_connections.len() >= MAX_CONNECTIONS_PER_SECOND {
@@ -101,7 +101,11 @@ mod tests {
         // Fill up to MAX_CONNECTIONS_PER_SECOND, authenticating each one
         // so the unauthenticated limit doesn't kick in first.
         for i in 0..MAX_CONNECTIONS_PER_SECOND {
-            assert!(rl.check_connection().is_ok(), "connection {} should succeed", i);
+            assert!(
+                rl.check_connection().is_ok(),
+                "connection {} should succeed",
+                i
+            );
             rl.on_authenticated();
         }
 
@@ -140,7 +144,10 @@ mod tests {
 
         // Authenticate one connection
         rl.on_authenticated();
-        assert_eq!(rl.unauthenticated_count, MAX_UNAUTHENTICATED_CONNECTIONS - 1);
+        assert_eq!(
+            rl.unauthenticated_count,
+            MAX_UNAUTHENTICATED_CONNECTIONS - 1
+        );
 
         // Now one more should succeed
         assert!(rl.check_connection().is_ok());
@@ -160,7 +167,10 @@ mod tests {
 
         // One auth failure
         rl.on_auth_failed();
-        assert_eq!(rl.unauthenticated_count, MAX_UNAUTHENTICATED_CONNECTIONS - 1);
+        assert_eq!(
+            rl.unauthenticated_count,
+            MAX_UNAUTHENTICATED_CONNECTIONS - 1
+        );
 
         // Now one more should succeed
         assert!(rl.check_connection().is_ok());

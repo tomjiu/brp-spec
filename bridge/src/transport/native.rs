@@ -6,10 +6,8 @@
 /// - Receive: [4-byte message length (native endian u32)] [UTF-8 JSON]
 ///
 /// Reference: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Native_messaging
-
 use serde_json::Value;
 use std::io::{self, Read, Write};
-use tokio::sync::mpsc;
 
 /// Read a single native message from stdin (blocking)
 pub fn read_native_message() -> io::Result<Option<Value>> {
@@ -38,16 +36,11 @@ pub fn read_native_message() -> io::Result<Option<Value>> {
     let mut buf = vec![0u8; len];
     handle.read_exact(&mut buf)?;
 
-    let text = String::from_utf8(buf).map_err(|e| {
-        io::Error::new(io::ErrorKind::InvalidData, format!("Invalid UTF-8: {}", e))
-    })?;
+    let text = String::from_utf8(buf)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid UTF-8: {}", e)))?;
 
-    let value: Value = serde_json::from_str(&text).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Invalid JSON: {}", e),
-        )
-    })?;
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid JSON: {}", e)))?;
 
     Ok(Some(value))
 }
@@ -76,39 +69,10 @@ pub fn write_native_message(msg: &Value) -> io::Result<()> {
     Ok(())
 }
 
-/// Async wrapper: spawns a blocking reader thread and sends messages via channel
-pub fn spawn_native_reader() -> mpsc::Receiver<Value> {
-    let (tx, rx) = mpsc::channel(64);
-
-    std::thread::spawn(move || {
-        log::info!("[NativeReader] Listening on stdin...");
-        loop {
-            match read_native_message() {
-                Ok(Some(msg)) => {
-                    if tx.blocking_send(msg).is_err() {
-                        log::error!("[NativeReader] Channel closed, stopping");
-                        break;
-                    }
-                }
-                Ok(None) => {
-                    log::info!("[NativeReader] EOF on stdin, browser disconnected");
-                    break;
-                }
-                Err(e) => {
-                    log::error!("[NativeReader] Read error: {}", e);
-                    break;
-                }
-            }
-        }
-    });
-
-    rx
-}
-
 /// Async wrapper for writing native messages
 pub async fn send_native_message(msg: &Value) -> io::Result<()> {
     let msg = msg.clone();
     tokio::task::spawn_blocking(move || write_native_message(&msg))
         .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Join error: {}", e)))?
+        .map_err(|e| io::Error::other(format!("Join error: {}", e)))?
 }
