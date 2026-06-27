@@ -4,7 +4,9 @@
   "private": true,
   "description": "BRP Firefox Extension",
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.content.json",
+    "typecheck:bg": "tsc --noEmit",
+    "typecheck:content": "tsc --noEmit -p tsconfig.content.json",
     "build": "node esbuild.mjs",
     "test": "vitest run",
     "test:watch": "vitest"

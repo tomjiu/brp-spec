@@ -24,42 +24,35 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const extensionRoot = resolve(__dirname, "..");
 
-// ─── content.js async pattern ───
+// ─── content.ts async pattern ───
 
-describe.skip("content.js message listener async pattern (PR 2 migrates content scripts)", () => {
+describe("content.ts message listener async pattern", () => {
   const contentSource = readFileSync(
-    resolve(extensionRoot, "content/content.js"),
+    resolve(extensionRoot, "src/content.ts"),
     "utf-8"
   );
 
   it("uses an async listener (returns a Promise, not sendResponse + return true)", () => {
-    // The listener should be declared as `async` — this is the correct pattern.
-    // Match: addListener(async (msg) => { or addListener(async function(msg) {
     const asyncListenerPattern = /onMessage\.addListener\(\s*async\s/;
     expect(asyncListenerPattern.test(contentSource)).toBe(true);
   });
 
   it("does NOT call sendResponse in executable code", () => {
-    // sendResponse is the second or third parameter in the listener callback.
-    // If the listener is async, it should return a Promise — sendResponse is NOT needed.
-    // We check for `sendResponse(` as a function call (ignoring comment mentions).
-    // Strip single-line comments before checking.
     const codeOnly = contentSource.replace(/\/\/.*$/gm, "");
     expect(codeOnly).not.toContain("sendResponse(");
   });
 
   it("does NOT return true from the listener (broken keepalive pattern)", () => {
-    // `return true` after sendResponse is the broken pattern that tells Firefox
-    // "I'll respond asynchronously" but doesn't work with async listeners.
-    //
-    // Extract just the listener callback body and check it doesn't contain `return true;`.
-    // Other functions (like isSensitiveElement) legitimately use `return true;`.
-    const listenerStart = contentSource.indexOf("onMessage.addListener(async");
+    // In TS, the listener signature is spread across multiple lines:
+    //   browser.runtime.onMessage.addListener(
+    //     async (msg: unknown): Promise<ContentResult> => {
+    const listenerStart = contentSource.indexOf("addListener(");
     expect(listenerStart).toBeGreaterThan(0);
 
     // Find the matching closing of the listener arrow function
-    // by counting braces from the opening { after the =>
-    const arrowIdx = contentSource.indexOf("=>", listenerStart);
+    const asyncStart = contentSource.indexOf("async", listenerStart);
+    expect(asyncStart).toBeGreaterThan(listenerStart);
+    const arrowIdx = contentSource.indexOf("=>", asyncStart);
     const openBrace = contentSource.indexOf("{", arrowIdx);
     let depth = 1;
     let pos = openBrace + 1;
@@ -70,15 +63,18 @@ describe.skip("content.js message listener async pattern (PR 2 migrates content 
     }
     const listenerBody = contentSource.slice(openBrace, pos);
 
-    // The listener body should NOT contain `return true;`
     expect(listenerBody).not.toMatch(/return\s+true\s*;/);
   });
 
   it("handles all actions via return values (not callbacks)", () => {
-    // Every case in the switch should use `return` to send results
     const returnStatements = contentSource.match(/^\s*return\s+/gm) || [];
-    // There should be many return statements (one per case + error handling)
     expect(returnStatements.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it("uses type guards (isHTMLElement, etc.) instead of `as HTMLElement` casts", () => {
+    expect(contentSource).toContain("isHTMLElement(");
+    expect(contentSource).toContain("isHTMLInputElement(");
+    expect(contentSource).not.toMatch(/\bas\s+HTMLElement\b/);
   });
 });
 
@@ -133,6 +129,18 @@ describe("manifest.json script ordering", () => {
     expect(handlersIdx).toBeGreaterThanOrEqual(0);
     expect(backgroundIdx).toBeGreaterThanOrEqual(0);
     expect(handlersIdx).toBeLessThan(backgroundIdx);
+  });
+
+  it("loads built itree before built content in content scripts", () => {
+    const contentScripts = manifest.content_scripts?.[0];
+    expect(contentScripts).toBeDefined();
+    const scripts = contentScripts.js;
+    const itreeIdx = scripts.indexOf("dist/itree.js");
+    const contentIdx = scripts.indexOf("dist/content.js");
+
+    expect(itreeIdx).toBeGreaterThanOrEqual(0);
+    expect(contentIdx).toBeGreaterThanOrEqual(0);
+    expect(itreeIdx).toBeLessThan(contentIdx);
   });
 
   it("still loads as MV2 (manifest_version: 2)", () => {

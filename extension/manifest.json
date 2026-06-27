@@ -23,8 +23,8 @@
         "<all_urls>"
       ],
       "js": [
-        "content/itree.js",
-        "content/content.js"
+        "dist/itree.js",
+        "dist/content.js"
       ],
       "run_at": "document_idle"
     }
