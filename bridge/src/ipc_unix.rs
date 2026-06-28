@@ -23,7 +23,7 @@ fn socket_path() -> PathBuf {
         PathBuf::from(dir).join("brp-bridge.sock")
     } else {
         // macOS doesn't set XDG_RUNTIME_DIR; use /tmp with UID to avoid collisions.
-        let uid = libc::getuid();
+        let uid = unsafe { libc::getuid() };
         PathBuf::from(format!("/tmp/brp-bridge-{}.sock", uid))
     }
 }
