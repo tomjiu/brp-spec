@@ -115,17 +115,56 @@ jobs:
         run: npm test
 
   # ---------------------------------------------------------------------------
+  # Integration: Smoke Tests (bridge startup + WS + JSON-RPC)
+  # Only runs on PR triggers.
+  # ---------------------------------------------------------------------------
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "bridge -> target"
+
+      - name: Build bridge
+        working-directory: bridge
+        run: cargo build --release
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install integration test deps
+        working-directory: tests/integration
+        run: npm ci
+
+      - name: Run integration tests
+        working-directory: tests/integration
+        run: npm test
+        env:
+          BRP_BRIDGE_PATH: ${{ github.workspace }}/bridge/target/release/brp-bridge
+
+  # ---------------------------------------------------------------------------
   # Summary: Required checks pass if all above succeed
   # ---------------------------------------------------------------------------
   ci-pass:
     name: CI Passed
     if: always()
-    needs: [rust, extension]
+    needs: [rust, extension, integration]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
         run: |
-          if [[ "${{ needs.rust.result }}" != "success" || "${{ needs.extension.result }}" != "success" ]]; then
+          if [[ "${{ needs.rust.result }}" != "success" || "${{ needs.extension.result }}" != "success" || "${{ needs.integration.result }}" != "success" ]]; then
             echo "One or more jobs failed."
             exit 1
           fi

@@ -1,0 +1,13 @@
+{
+  "name": "brp-integration-tests",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "typescript": "^5.0.0",
+    "ws": "^8.0.0"
+  }
+}
