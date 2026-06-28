@@ -5,8 +5,8 @@ export default defineConfig({
     // Tests live in tests/ directory
     include: ["tests/**/*.test.ts"],
 
-    // No DOM environment needed — handlers.js is pure logic
-    // (no happy-dom needed since we don't test DOM operations)
+    // DOM tests (precondition.test.ts) use jsdom directly via import.
+    // Handler tests remain pure logic, no DOM env needed.
     environment: "node",
 
     // Globals off — use explicit imports
