@@ -33,6 +33,12 @@ Firefox Extension
 | Firefox + Firefox Dev | ✅ (each spawns own bridge) |
 | Multiple profiles | ✅ (each spawns own bridge) |
 
+### Known trade-offs
+
+- **Native Port kept open during WS session**: minor resource overhead, necessary to keep bridge alive on Windows (port.disconnect() kills the process)
+- **Extension crash may temporarily leave orphan bridge**: relies on OS process cleanup; the bridge's 30-second WS connection timeout also helps
+- **Reconnect restarts entire bridge**: acceptable for loopback (WS is 127.0.0.1), optimization deferred to v0.4.2+
+
 ## Mode 2: Standalone Bridge — v0.3.0+
 
 **Use case**: MCP client (Claude Desktop, Codex) drives browser without B1 auto-link.
