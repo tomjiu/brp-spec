@@ -5,6 +5,12 @@ All notable changes to the BRP (Browser Runtime Protocol) project are documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### v0.4.0 B1 — Native Messaging Auto-Link (in progress)
+
+B1 implementation in progress — Native Messaging Auto-Link replaces manual token provisioning with `browser.runtime.connectNative()` auto-launch. See [`docs/v0.4.0-B1-IMPLEMENTATION-PLAN.md`](docs/v0.4.0-B1-IMPLEMENTATION-PLAN.md) for the full plan.
+
 ## [0.3.4] — 2026-06-28
 
 ### Install Scripts

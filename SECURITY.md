@@ -67,6 +67,10 @@ These exist in the codebase today.
   (`extension/content/content.js`).
 - **Notification sequence numbers.** All notifications forwarded to the AI
   client carry a monotonic sequence number for gap detection.
+- **Native Messaging Auto-Link (v0.4.0 B1).** Planned: token provisioning via
+  `browser.runtime.connectNative()` stdout, replacing file-based token delivery.
+  See [`docs/v0.4.0-B1-IMPLEMENTATION-PLAN.md`](docs/v0.4.0-B1-IMPLEMENTATION-PLAN.md)
+  for security considerations.
 
 ## 4. Known risks / hardening backlog
 

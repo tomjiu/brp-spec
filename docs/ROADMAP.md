@@ -62,21 +62,35 @@
 - [x] **C1** esbuild for extension build pipeline
 - [x] **C3** Complete modularization: ws_server.rs / native_msg.rs / router.rs / config.rs
 
-## v0.4.0 — B1 Implementation + Stability [ ]
+## v0.4.0 — B1 Implementation + Stability [~]
 
-- [ ] **B1** Bridge --mode=bridge / --mode=bootstrap
-- [ ] **B1** IPC (interprocess or tokio native): Unix Socket + Named Pipe
-- [ ] **B1** PID lockfile + stale cleanup + MRU selection
-- [ ] **B1** Windows Named Pipe ACL (DACL restricting to current user)
-- [ ] **B1** Extension connectNative + stdout token read + WS connect
-- [ ] **B1** supportsAutoLink capability in initialize response
+> Detailed plan: [docs/v0.4.0-B1-IMPLEMENTATION-PLAN.md](v0.4.0-B1-IMPLEMENTATION-PLAN.md)
+
+- [ ] **PR #18** Bridge dual-mode (`--mode=bridge` / `--mode=bootstrap`) + `--echo` smoke flag
+- [ ] **PR #19** Unix Socket IPC (Linux/macOS lockfile coordination)
+- [ ] **PR #20** Windows Named Pipe with DACL (full SECURITY_ATTRIBUTES implementation)
+- [ ] **PR #21** PID lockfile + stale cleanup (no MRU reuse)
+- [ ] **PR #22** Extension connectNative + auto-link (token via stdout, WS auto-connect)
+- [ ] **PR #17** This implementation plan document itself
+
+## v0.4.1 — DOM Interaction Reliability [ ]
+
 - [ ] **E3** DOM Precondition validation (tagName, textContains, attributes)
 - [ ] **E4** Context Recovery Pipeline (selector fallback chain, acceptFallback opt-in)
+
+## v0.4.2 — Multi-Instance [ ]
+
+- [ ] MRU multi-instance reuse (currently each extension starts its own bridge)
 
 ## v0.4.x — Real Extension Integration Tests [ ]
 
 - [ ] **D1** web-ext + headless Firefox: full flow (connect → navigate → ITree → click)
 - [ ] Fixed test pages (local SPA), retry mechanism
+
+## v1.0-pre — Stable API + Compat [ ]
+
+- [ ] supportsAutoLink capability negotiation + backward compatibility matrix
+- [ ] Multi-browser compatibility test matrix (Firefox / Zen / LibreWolf)
 
 ## v0.5.0+ — Defense in Depth [ ]
 
