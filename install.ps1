@@ -23,17 +23,24 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$ScriptDir = Split-Path -Parent $PSCommandPath
-$ProjectDir = Split-Path -Parent $ScriptDir
+# P0 fix: script is IN the repo root, not a subdirectory
+$ProjectDir = Split-Path -Parent $PSCommandPath
 $ManifestTemplate = Join-Path $ProjectDir "native-manifest\org.brp.bridge.json"
 $Binary = Join-Path $ProjectDir "bridge\target\release\brp-bridge.exe"
+
+# ─── Error helper (red text, no PS stack trace) ───
+
+function Write-ErrorRed {
+  param([string]$Message)
+  Write-Host $Message -ForegroundColor Red
+}
 
 # ─── Binary check (install only) ───
 
 if (-not $Uninstall) {
   if (-not (Test-Path $Binary)) {
-    Write-Error "Bridge binary not found at $Binary"
-    Write-Error "       Build it first: cd $ProjectDir\bridge; cargo build --release"
+    Write-ErrorRed "ERROR: Bridge binary not found at $Binary"
+    Write-ErrorRed "       Build it first: cd $ProjectDir\bridge; cargo build --release"
     exit 1
   }
   $BinaryPath = (Resolve-Path $Binary).Path
@@ -43,18 +50,23 @@ if (-not $Uninstall) {
 # ─── Manifest template check ───
 
 if (-not (Test-Path $ManifestTemplate)) {
-  Write-Error "Manifest template not found at $ManifestTemplate"
+  Write-ErrorRed "ERROR: Manifest template not found at $ManifestTemplate"
   exit 1
+}
+
+# ─── Persistent manifest directory (not TEMP — survives cleanup) ───
+
+$ManifestDir = Join-Path $env:LOCALAPPDATA "brp-bridge"
+if (-not (Test-Path $ManifestDir)) {
+  New-Item -Path $ManifestDir -ItemType Directory -Force | Out-Null
 }
 
 # ─── Browser detection ───
 
 function Detect-Browsers {
   $found = @()
-  # Firefox
   if (Test-Path "$env:LOCALAPPDATA\Mozilla\Firefox") { $found += "Firefox" }
   if (Test-Path "$env:APPDATA\Mozilla\Firefox") { $found += "Firefox" }
-  # Zen
   if (Test-Path "$env:LOCALAPPDATA\zen") { $found += "Zen" }
   if (Test-Path "$env:APPDATA\zen") { $found += "Zen" }
   return ($found | Select-Object -Unique)
@@ -63,12 +75,16 @@ function Detect-Browsers {
 if ($Browser -eq "Detect") {
   $Detected = Detect-Browsers
   if ($Detected.Count -eq 0) {
-    Write-Warning "Could not detect Firefox or Zen. Use -Browser to specify."
-    Write-Warning "  .\install.ps1 -Browser Firefox"
+    Write-Host "WARNING: Could not detect Firefox or Zen. Use -Browser to specify." -ForegroundColor Yellow
+    Write-Host "  .\install.ps1 -Browser Firefox" -ForegroundColor Yellow
     exit 1
   }
-  $Browser = ($Detected -join " ")
-  Write-Host "[detect] Found: $Browser"
+  Write-Host "[detect] Found: $($Detected -join ', ')"
+  $browserList = $Detected
+} elseif ($Browser -eq "Both") {
+  $browserList = @("Firefox", "Zen")
+} else {
+  $browserList = @($Browser)
 }
 
 # ─── Registry helpers ───
@@ -76,7 +92,6 @@ if ($Browser -eq "Detect") {
 $RegPath = @{
   "Firefox" = "HKCU:\Software\Mozilla\NativeMessagingHosts\org.brp.bridge"
   "Zen"     = "HKCU:\Software\Mozilla\NativeMessagingHosts\org.brp.bridge"
-  # Zen also uses the Mozilla namespace for Native Messaging in current builds
 }
 
 function Install-Registry {
@@ -84,26 +99,31 @@ function Install-Registry {
 
   $key = $RegPath[$BrowserName]
   $parent = Split-Path -Parent $key
-  $leaf   = Split-Path -Leaf $key
 
   if (-not $Uninstall) {
-    # Create a copy of the manifest with the real binary path
-    $tmpManifest = Join-Path $env:TEMP "org.brp.bridge-$BrowserName.json"
-    (Get-Content $ManifestTemplate -Raw) `
-      -replace 'PLACEHOLDER_ABSOLUTE_PATH_TO_BRP_BRIDGE_EXECUTABLE', $BinaryPath.Replace('\', '\\') `
-      | Set-Content -Path $tmpManifest -Encoding UTF8 -NoNewline
-    # Ensure newline at end (Firefox native messaging spec requires it)
-    Add-Content -Path $tmpManifest -Value ""
+    # Create manifest with real binary path (UTF-8 no BOM via .NET API)
+    $manifestFile = Join-Path $ManifestDir "org.brp.bridge-$BrowserName.json"
+    $content = (Get-Content $ManifestTemplate -Raw) -replace `
+      'PLACEHOLDER_ABSOLUTE_PATH_TO_BRP_BRIDGE_EXECUTABLE',
+      $BinaryPath.Replace('\', '\\')
+    # Firefox native messaging spec requires trailing newline
+    if (-not $content.EndsWith("`n")) { $content += "`n" }
+    # Write UTF-8 without BOM (PowerShell 5.x safe)
+    [System.IO.File]::WriteAllText(
+      $manifestFile,
+      $content,
+      [System.Text.UTF8Encoding]::new($false)
+    )
 
     # Create/update registry
     if (-not (Test-Path $parent)) {
       New-Item -Path $parent -Force | Out-Null
     }
     New-Item -Path $key -Force | Out-Null
-    Set-ItemProperty -Path $key -Name "(Default)" -Value $tmpManifest
+    Set-ItemProperty -Path $key -Name "(Default)" -Value $manifestFile
 
     Write-Host "[install] $BrowserName → registry: $key"
-    Write-Host "          manifest: $tmpManifest"
+    Write-Host "          manifest: $manifestFile"
   }
   else {
     if (Test-Path $key) {
@@ -113,26 +133,26 @@ function Install-Registry {
     else {
       Write-Host "[uninstall] $BrowserName — not installed (no registry key)"
     }
-    # Also clean up temp manifest
-    $tmpManifest = Join-Path $env:TEMP "org.brp.bridge-$BrowserName.json"
-    if (Test-Path $tmpManifest) {
-      Remove-Item $tmpManifest -Force
+    # Clean up manifest file
+    $manifestFile = Join-Path $ManifestDir "org.brp.bridge-$BrowserName.json"
+    if (Test-Path $manifestFile) {
+      Remove-Item $manifestFile -Force
     }
   }
 }
 
 # ─── Execute ───
 
-foreach ($b in ($Browser -split ' ')) {
+foreach ($b in $browserList) {
   Install-Registry -BrowserName $b
 }
 
 Write-Host ""
 if ($Uninstall) {
-  Write-Host "✅ Native messaging manifest(s) removed from registry."
+  Write-Host "Native messaging manifest(s) removed from registry."
 }
 else {
-  Write-Host "✅ Native messaging manifest(s) installed."
-  Write-Host "   Next: Load the extension in Firefox/Zen → about:debugging"
+  Write-Host "Native messaging manifest(s) installed."
+  Write-Host "   Next: Load the extension in Firefox/Zen -> about:debugging"
   Write-Host "         Then start the bridge: cd $ProjectDir\bridge; cargo run"
 }

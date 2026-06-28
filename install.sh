@@ -17,7 +17,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_DIR="$SCRIPT_DIR"
 MANIFEST_TEMPLATE="$PROJECT_DIR/native-manifest/org.brp.bridge.json"
 BINARY="$PROJECT_DIR/bridge/target/release/brp-bridge"
 
