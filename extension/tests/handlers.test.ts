@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-const BRP = await import("../src/handlers.ts");
+import * as BRP from "../src/handlers";
 
 // --- Input Validation ---
 
@@ -62,8 +62,8 @@ describe("validateUrl", () => {
   });
 
   it("rejects non-string input", () => {
-    expect(BRP.validateUrl(42)).toBe("URL is required");
-    expect(BRP.validateUrl({ url: "http://x.com" })).toBe("URL is required");
+    expect(BRP.validateUrl(42 as unknown as string)).toBe("URL is required");
+    expect(BRP.validateUrl({ url: "http://x.com" } as unknown as string)).toBe("URL is required");
   });
 
   it("rejects URLs that are too long", () => {
@@ -91,7 +91,7 @@ describe("validateSelector", () => {
   });
 
   it("rejects selector with non-string value", () => {
-    const err = BRP.validateSelector({ type: "css", value: 42 });
+    const err = BRP.validateSelector({ type: "css", value: 42 as unknown as string });
     expect(err).toContain("string");
   });
 
@@ -130,9 +130,9 @@ describe("validateTabId", () => {
   });
 
   it("rejects non-number types", () => {
-    expect(BRP.validateTabId("42")).toContain("non-negative integer");
-    expect(BRP.validateTabId(true)).toContain("non-negative integer");
-    expect(BRP.validateTabId({})).toContain("non-negative integer");
+    expect(BRP.validateTabId("42" as unknown as number)).toContain("non-negative integer");
+    expect(BRP.validateTabId(true as unknown as number)).toContain("non-negative integer");
+    expect(BRP.validateTabId({} as unknown as number)).toContain("non-negative integer");
   });
 
   it("rejects NaN and Infinity", () => {
@@ -153,7 +153,7 @@ describe("isRestrictedUrl", () => {
 
   it.each(BRP.RESTRICTED_URL_PREFIXES)(
     "returns true for %s URLs",
-    (prefix) => {
+    (prefix: string) => {
       expect(BRP.isRestrictedUrl(prefix + "something")).toBe(true);
     }
   );
@@ -172,7 +172,7 @@ describe("isRestrictedUrl", () => {
 // --- Navigation Sentinel ---
 
 describe("shouldBlockNavigation", () => {
-  let agentTabIds;
+  let agentTabIds: Set<number>;
 
   beforeEach(() => {
     agentTabIds = new Set([10, 20, 30]);
@@ -215,7 +215,7 @@ describe("shouldBlockNavigation", () => {
   });
 
   it("allows when URL is null or empty", () => {
-    expect(BRP.shouldBlockNavigation(null, 10, agentTabIds).block).toBe(false);
+    expect(BRP.shouldBlockNavigation(null as unknown as string, 10, agentTabIds).block).toBe(false);
     expect(BRP.shouldBlockNavigation("", 10, agentTabIds).block).toBe(false);
   });
 
@@ -227,7 +227,7 @@ describe("shouldBlockNavigation", () => {
 // --- Tab Tracker ---
 
 describe("createTabTracker", () => {
-  let tracker;
+  let tracker: ReturnType<typeof BRP.createTabTracker>;
 
   beforeEach(() => {
     tracker = BRP.createTabTracker();
@@ -309,7 +309,7 @@ describe("routeMethod", () => {
     for (const method of BRP.getKnownMethods()) {
       const route = BRP.routeMethod(method);
       expect(route).not.toBeNull();
-      expect(route.type).toMatch(/^(direct|elementAction)$/);
+      expect(route!.type).toMatch(/^(direct|elementAction)$/);
     }
   });
 
@@ -327,8 +327,8 @@ describe("routeMethod", () => {
     ];
     for (const method of elementMethods) {
       const route = BRP.routeMethod(method);
-      expect(route.type).toBe("elementAction");
-      expect(route.action).toBeTruthy();
+      expect(route!.type).toBe("elementAction");
+      expect(route!.action).toBeTruthy();
     }
   });
 
@@ -341,8 +341,8 @@ describe("routeMethod", () => {
     ];
     for (const method of directMethods) {
       const route = BRP.routeMethod(method);
-      expect(route.type).toBe("direct");
-      expect(route.handler).toBeTruthy();
+      expect(route!.type).toBe("direct");
+      expect(route!.handler).toBeTruthy();
     }
   });
 
