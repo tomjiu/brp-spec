@@ -11,6 +11,7 @@ import type {
   ContentError,
   Modifiers,
 } from "./types.content";
+import { validatePrecondition } from "./precondition";
 import type { ITreeAPI } from "./types.content";
 import {
   isHTMLElement,
@@ -94,6 +95,9 @@ function doClick(msg: ContentMessage): ContentResult {
   const el = itree.findElement(msg.selector, msg.selectors, msg.nodeId);
   if (!el || !isHTMLElement(el)) return elementNotFound();
 
+  const preErr = validatePrecondition(el, msg.precondition);
+  if (preErr) return preErr;
+
   el.scrollIntoView({ behavior: "smooth", block: "center" });
 
   const rect = el.getBoundingClientRect();
@@ -133,6 +137,9 @@ function doType(msg: ContentMessage): ContentResult {
   const el = itree.findElement(msg.selector, msg.selectors, msg.nodeId);
   if (!el || !isHTMLElement(el)) return elementNotFound();
 
+  const preErr = validatePrecondition(el, msg.precondition);
+  if (preErr) return preErr;
+
   el.scrollIntoView({ behavior: "smooth", block: "center" });
   el.focus();
 
@@ -163,6 +170,9 @@ function doType(msg: ContentMessage): ContentResult {
 function doFill(msg: ContentMessage): ContentResult {
   const el = itree.findElement(msg.selector, msg.selectors, msg.nodeId);
   if (!el || !isHTMLElement(el)) return elementNotFound();
+
+  const preErr = validatePrecondition(el, msg.precondition);
+  if (preErr) return preErr;
 
   el.scrollIntoView({ behavior: "smooth", block: "center" });
   el.focus();
@@ -228,6 +238,9 @@ function doHover(msg: ContentMessage): ContentResult {
   const el = itree.findElement(msg.selector, msg.selectors, msg.nodeId);
   if (!el || !isHTMLElement(el)) return elementNotFound();
 
+  const preErr = validatePrecondition(el, msg.precondition);
+  if (preErr) return preErr;
+
   el.scrollIntoView({ behavior: "smooth", block: "center" });
 
   const rect = el.getBoundingClientRect();
@@ -247,6 +260,9 @@ function doSelect(msg: ContentMessage): ContentResult {
     if (!el) return elementNotFound();
     return { error: "Element is not a <select>", errorCode: "BRP_INVALID_TARGET" };
   }
+
+  const preErr = validatePrecondition(el, msg.precondition);
+  if (preErr) return preErr;
 
   const values = msg.values ?? (msg.value !== undefined ? [msg.value] : []);
 

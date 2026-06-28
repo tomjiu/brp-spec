@@ -4,6 +4,7 @@
 ///
 /// States: Disconnected → Connecting → Authenticating → Ready → Busy → Closing → Closed
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use ts_rs::TS;
 use uuid::Uuid;
 
@@ -130,6 +131,26 @@ impl Capabilities {
             max_request_size: self.max_request_size,
         }
     }
+}
+
+// ─── Precondition (E3) ───
+
+/// Optional pre-action element validation.
+/// When present, the extension validates the target element matches these criteria
+/// before executing the action.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export, export_to = "../bindings/")]
+pub struct Precondition {
+    /// Expected tag name (case-insensitive, e.g. "BUTTON", "A")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag_name: Option<String>,
+    /// Element text must include this substring
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_contains: Option<String>,
+    /// Attribute key-value pairs to match exactly
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attributes: Option<HashMap<String, String>>,
 }
 
 // ─── Initialize Params ───
@@ -264,5 +285,36 @@ impl Session {
     /// Get next sequence number for notifications
     pub fn next_sequence(&mut self) -> u64 {
         self.sequence.next()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_precondition_serde_roundtrip() {
+        let pre = Precondition {
+            tag_name: Some("BUTTON".into()),
+            text_contains: Some("Submit".into()),
+            attributes: Some(HashMap::from([("data-testid".into(), "login-btn".into())])),
+        };
+        let json = serde_json::to_value(&pre).unwrap();
+        let pre2: Precondition = serde_json::from_value(json).unwrap();
+        assert_eq!(pre2.tag_name.as_deref(), Some("BUTTON"));
+        assert_eq!(pre2.text_contains.as_deref(), Some("Submit"));
+        let attrs = pre2.attributes.unwrap();
+        assert_eq!(attrs.get("data-testid").unwrap(), "login-btn");
+    }
+
+    #[test]
+    fn test_precondition_optional_fields() {
+        let pre = Precondition::default();
+        let json = serde_json::to_value(&pre).unwrap();
+        assert_eq!(json, serde_json::json!({}));
+        let pre2: Precondition = serde_json::from_value(json).unwrap();
+        assert!(pre2.tag_name.is_none());
+        assert!(pre2.text_contains.is_none());
+        assert!(pre2.attributes.is_none());
     }
 }
