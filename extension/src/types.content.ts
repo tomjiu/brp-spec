@@ -23,6 +23,15 @@ export interface ContentMessage {
   css?: string;
   timeout?: number;
   attribute?: string;
+  precondition?: Precondition;
+}
+
+// ─── Precondition (E3) ───
+
+export interface Precondition {
+  tagName?: string;
+  textContains?: string;
+  attributes?: Record<string, string>;
 }
 
 // ─── Selectors ───
