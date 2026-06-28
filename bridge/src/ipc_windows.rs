@@ -46,8 +46,9 @@ struct SecurityAttributes {
     inherit: i32,
 }
 
+// SECURITY_DESCRIPTOR_MIN_LENGTH (40 bytes) + alignment padding
 #[repr(C)]
-struct SecurityDescriptor([u8; 64]); // Max possible size, padded
+struct SecurityDescriptor([u8; 64]);
 
 #[repr(C)]
 struct TrusteeW {
@@ -93,6 +94,7 @@ extern "system" {
     ) -> HandlePtr;
     fn DisconnectNamedPipe(pipe: HandlePtr) -> i32;
     fn CloseHandle(handle: HandlePtr) -> i32;
+    fn LocalFree(mem: *mut c_void) -> HandlePtr;
 }
 
 // ─── Extern Win32 API (advapi32) ───
@@ -200,11 +202,15 @@ fn build_restricted_sd() -> io::Result<SecurityDescriptor> {
     // 5. Security descriptor with DACL
     let mut sd = SecurityDescriptor([0u8; 64]);
     if unsafe { InitializeSecurityDescriptor(&mut sd, SECURITY_DESCRIPTOR_REVISION) } == 0 {
+        unsafe { LocalFree(acl); }
         return Err(io::Error::last_os_error());
     }
     if unsafe { SetSecurityDescriptorDacl(&mut sd, 1, acl, 0) } == 0 {
+        unsafe { LocalFree(acl); }
         return Err(io::Error::last_os_error());
     }
+    // SD has copied the ACL — safe to free our copy
+    unsafe { LocalFree(acl); }
 
     Ok(sd)
 }
@@ -252,10 +258,13 @@ impl PipeLock {
         if handle == invalid_handle_value() {
             let e = io::Error::last_os_error();
             match e.raw_os_error() {
-                Some(5) | Some(231) => Err(io::Error::new(
-                    io::ErrorKind::AddrInUse,
-                    format!("Bridge already running (pipe: {})", name),
-                )),
+                Some(5) | Some(231) => {
+                    // 5 = ERROR_ACCESS_DENIED, 231 = ERROR_PIPE_BUSY
+                    Err(io::Error::new(
+                        io::ErrorKind::AddrInUse,
+                        format!("Bridge already running (pipe: {})", name),
+                    ))
+                }
                 _ => Err(e),
             }
         } else {
