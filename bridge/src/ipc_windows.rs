@@ -202,15 +202,21 @@ fn build_restricted_sd() -> io::Result<SecurityDescriptor> {
     // 5. Security descriptor with DACL
     let mut sd = SecurityDescriptor([0u8; 64]);
     if unsafe { InitializeSecurityDescriptor(&mut sd, SECURITY_DESCRIPTOR_REVISION) } == 0 {
-        unsafe { LocalFree(acl); }
+        unsafe {
+            LocalFree(acl);
+        }
         return Err(io::Error::last_os_error());
     }
     if unsafe { SetSecurityDescriptorDacl(&mut sd, 1, acl, 0) } == 0 {
-        unsafe { LocalFree(acl); }
+        unsafe {
+            LocalFree(acl);
+        }
         return Err(io::Error::last_os_error());
     }
     // SD has copied the ACL — safe to free our copy
-    unsafe { LocalFree(acl); }
+    unsafe {
+        LocalFree(acl);
+    }
 
     Ok(sd)
 }
