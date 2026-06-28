@@ -244,6 +244,7 @@ impl PipeLock {
         // Build DACL — fall back to default SD on failure
         // (CI environments may have tokens incompatible with SetEntriesInAclW)
         let mut sd_buf = SecurityDescriptor([0u8; 64]);
+        #[allow(unused_assignments)]
         let sa_sd: *const c_void = match build_restricted_sd() {
             Ok(sd) => {
                 sd_buf = sd;
