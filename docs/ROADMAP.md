@@ -67,10 +67,10 @@
 > Detailed plan: [docs/v0.4.0-B1-IMPLEMENTATION-PLAN.md](v0.4.0-B1-IMPLEMENTATION-PLAN.md)
 
 - [ ] **PR #18** Bridge dual-mode (`--mode=bridge` / `--mode=bootstrap`) + `--echo` smoke flag
-- [ ] **PR #19** Unix Socket IPC (Linux/macOS lockfile coordination)
-- [ ] **PR #20** Windows Named Pipe with DACL (full SECURITY_ATTRIBUTES implementation)
-- [ ] **PR #21** PID lockfile + stale cleanup (no MRU reuse)
-- [ ] **PR #22** Extension connectNative + auto-link (token via stdout, WS auto-connect)
+- [ ] **PR #20** Unix Socket IPC (Linux/macOS lockfile coordination)
+- [ ] **PR #21** Windows Named Pipe with DACL (full SECURITY_ATTRIBUTES implementation)
+- [ ] **PR #22** PID lockfile + stale cleanup (no MRU reuse)
+- [ ] **PR #23** Extension connectNative + auto-link (token via stdout, WS auto-connect)
 - [ ] **PR #17** This implementation plan document itself
 
 ## v0.4.1 — DOM Interaction Reliability [ ]
