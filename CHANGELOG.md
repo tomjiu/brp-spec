@@ -5,11 +5,58 @@ All notable changes to the BRP (Browser Runtime Protocol) project are documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] — 2026-06-28
 
-### v0.4.0 B1 — Native Messaging Auto-Link (in progress)
+### B1: Native Messaging Auto-Link
 
-B1 implementation in progress — Native Messaging Auto-Link replaces manual token provisioning with `browser.runtime.connectNative()` auto-launch. See [`docs/v0.4.0-B1-IMPLEMENTATION-PLAN.md`](docs/v0.4.0-B1-IMPLEMENTATION-PLAN.md) for the full plan.
+This release introduces B1 — the biggest UX improvement since v0.3.0. Users no longer need to manually copy/paste auth tokens.
+
+New flow: Load extension → bridge auto-starts → WebSocket auto-connects. No token file, no Options page configuration.
+
+### Bridge (Rust)
+
+- Dual-mode binary (`--mode=bridge` / `--mode=bootstrap`)
+- Unix Socket IPC (Linux/macOS): single-instance enforcement
+- Windows Named Pipe + DACL: restricted to current user SID
+- PID lockfile + stale cleanup: atomic write, cross-platform PID liveness
+- Real WS port: bootstrap binds port 0, reads OS-assigned port
+- Two-phase wait: bridge waits for WS connection (30s timeout) before stdin EOF
+
+### Extension (TypeScript)
+
+- `native.ts` module: `startBridge()` — connectNative → read token → connect WebSocket
+- 3-second token timeout: shows "Bridge not installed" if no token received
+- Token storage: bootstrap token stored to `browser.storage.local`
+- Native port lifecycle: port kept open during WS session, disconnected on WS close
+- Fallback: if B1 fails, falls back to v0.3.x manual config
+
+### Security
+
+- DACL on Windows: Named Pipe restricted to current user SID (cross-user verified)
+- Token never written to file in B1 mode: delivered via stdout only
+- 30s WS connection timeout: prevents zombie bridge processes
+
+### Multi-Instance Support
+
+B1 architecture natively supports multiple browser instances:
+
+| Scenario | Support | Mechanism |
+|---|---|---|
+| Multiple tabs | ✅ | Shared background, single WS |
+| Multiple windows (same profile) | ✅ | Shared background |
+| Multiple browsers (Firefox + Zen) | ✅ | Each spawns own bridge with random port |
+| Multiple profiles | ✅ | Each spawns own bridge |
+| Multiple MCP clients | ⚠️ | Manual `BRP_WS_ADDR` config needed |
+
+See [docs/USAGE-MODES.md](docs/USAGE-MODES.md) for details.
+
+### Prototype Validation (PR #17)
+
+B1 implementation validated by 5 prototype tests, all passed.
+
+### Breaking Changes
+
+None. v0.3.x manual config path preserved as fallback.
 
 ## [0.3.4] — 2026-06-28
 
