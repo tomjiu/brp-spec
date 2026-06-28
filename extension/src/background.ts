@@ -63,19 +63,22 @@ async function sendToContentScript(
   return isJsonValue(response) ? response : null;
 }
 
-function isJsonRpcRequest(value: unknown): value is JsonRpcRequest {
+function isJsonRpcMessage(value: unknown): value is JsonObject {
   if (!isJsonObject(value)) return false;
   const id = value.id;
   const method = value.method;
   const params = value.params;
   const error = value.error;
   const jsonrpc = value.jsonrpc;
-  const hasValidId = id === undefined || id === null || typeof id === "string" || typeof id === "number";
-  const hasValidMethod = method === undefined || method === null || typeof method === "string";
+  // A valid JSON-RPC 2.0 message has a "2.0" jsonrpc field (if present)
+  const hasValidJsonrpc = jsonrpc === undefined || jsonrpc === "2.0";
+  // It either has a method (request/notification) or an id with result/error (response)
+  const hasValidMethod = typeof method === "string";
+  const hasValidId = typeof id === "string" || typeof id === "number";
   const hasValidParams = params === undefined || params === null || isJsonObject(params);
   const hasValidError = error === undefined || error === null || isJsonObject(error);
-  const hasValidJsonrpc = jsonrpc === undefined || jsonrpc === null || jsonrpc === "2.0";
-  return hasValidId && hasValidMethod && hasValidParams && hasValidError && hasValidJsonrpc;
+  // Must have at least method or id to be a meaningful message
+  return hasValidJsonrpc && ((hasValidMethod && hasValidParams) || (hasValidId && hasValidError));
 }
 
 function connect(): void {
@@ -113,7 +116,7 @@ function connect(): void {
         browserId: browserName,
         token: token || "",
         userAgent: navigator.userAgent,
-        extensionVersion: "0.3.0",
+        extensionVersion: "0.3.3",
       },
     });
     ws?.send(registerMsg);
@@ -123,18 +126,30 @@ function connect(): void {
   ws.onmessage = (event: MessageEvent<string>): void => {
     try {
       const parsed: unknown = JSON.parse(event.data);
-      if (!isJsonRpcRequest(parsed)) return;
-      const msg = parsed;
+      if (!isJsonRpcMessage(parsed)) return;
+      const msg: JsonObject = parsed;
 
+      // Check for auth rejection error response before treating as a request
       if (!authenticated && isJsonObject(msg.error)) {
         console.error("[BRP] Bridge rejected registration:", getString(msg.error, "message"));
         ws?.close(4001, "Auth failed");
         return;
       }
 
+      // Extract Request fields (validated by isJsonRpcMessage)
+      if (msg.id === undefined || msg.id === null || typeof msg.method !== "string") {
+        return; // Notification or invalid — skip
+      }
+      const req: JsonRpcRequest = {
+        jsonrpc: "2.0",
+        id: msg.id as MessageId,
+        method: msg.method,
+        ...(isJsonObject(msg.params) ? { params: msg.params } : {}),
+      };
+
       authenticated = true;
-      console.log("[BRP] ← ", msg.method || msg.id);
-      void handleRequest(msg);
+      console.log("[BRP] ← ", req.method);
+      void handleRequest(req);
     } catch (error: unknown) {
       console.error("[BRP] Parse error:", error);
     }
@@ -181,10 +196,9 @@ function sendToBridge(msg: BridgeMessage): void {
 }
 
 async function handleRequest(msg: JsonRpcRequest): Promise<void> {
-  if (msg.id === undefined || msg.id === null || !msg.method) return;
   const id = msg.id;
   const method = msg.method;
-  const params = msg.params ?? undefined;
+  const params = msg.params;
 
   try {
     let result: JsonValue;

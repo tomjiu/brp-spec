@@ -1,7 +1,6 @@
 # BRP Development Roadmap
 
-> Last updated: 2026-06-27
-> See also: [BRP_Development_Plan_v1.0.md](https://github.com/tomjiu/brp-spec/blob/main/docs/BRP_Development_Plan_v1.0.md) (comprehensive design decisions)
+> Last updated: 2026-06-28
 
 ## Legend
 
@@ -55,13 +54,13 @@
 - [ ] **B1 Spike** Cross-platform validation (Linux + macOS + Windows)
 - [ ] install.sh / install.ps1 draft
 
-## v0.4.0-alpha — TypeScript Migration (pure refactor, zero new features) [ ]
+## v0.4.0-alpha — TypeScript Migration (pure refactor, zero new features) [x]
 
-- [ ] **C1** background.js → TypeScript
-- [ ] **C1** ts-rs: auto-generate TS types from Rust structs
-- [ ] **C1** Enforce `#[serde(tag = "type", content = "data")]` on all wire types
-- [ ] **C1** esbuild for extension build pipeline
-- [ ] **C3** Complete modularization: ws_server.rs / native_msg.rs / router.rs / config.rs
+- [x] **C1** background.js → TypeScript (src/background.ts, src/handlers.ts)
+- [x] **C1** content.js → TypeScript (src/content.ts, src/itree.ts)
+- [x] **C1** ts-rs: auto-generate TS types from Rust structs (6 types in bridge/bindings/)
+- [x] **C1** esbuild for extension build pipeline
+- [x] **C3** Complete modularization: ws_server.rs / native_msg.rs / router.rs / config.rs
 
 ## v0.4.0 — B1 Implementation + Stability [ ]
 

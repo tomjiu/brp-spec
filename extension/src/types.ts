@@ -5,11 +5,10 @@ export interface JsonObject { [key: string]: JsonValue | undefined }
 export type MessageId = string | number;
 
 export interface JsonRpcRequest {
-  jsonrpc: "2.0" | null | undefined;
-  id: MessageId | null | undefined;
-  method: string | null | undefined;
-  params: JsonObject | null | undefined;
-  error: JsonObject | null | undefined;
+  jsonrpc: "2.0";
+  id: MessageId;
+  method: string;
+  params?: JsonObject;
 }
 
 export interface JsonRpcResponse {

@@ -39,7 +39,8 @@ impl std::fmt::Display for SessionState {
 // ─── Client Info ───
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../bindings/")]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export, export_to = "../bindings/")]
 pub struct ClientInfo {
     pub name: String,
     #[serde(default)]
@@ -49,7 +50,8 @@ pub struct ClientInfo {
 // ─── Capabilities ───
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../bindings/")]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export, export_to = "../bindings/")]
 pub struct Capabilities {
     #[serde(default)]
     pub features: Vec<String>,
@@ -133,7 +135,8 @@ impl Capabilities {
 // ─── Initialize Params ───
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../bindings/")]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export, export_to = "../bindings/")]
 pub struct InitializeParams {
     #[serde(default = "default_version")]
     pub protocol_version: String,
@@ -151,7 +154,7 @@ fn default_version() -> String {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "../bindings/")]
+#[ts(rename_all = "camelCase", export, export_to = "../bindings/")]
 pub struct InitializeResult {
     pub session_id: String,
     pub protocol_version: String,
@@ -161,7 +164,8 @@ pub struct InitializeResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../bindings/")]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export, export_to = "../bindings/")]
 pub struct ServerInfo {
     pub name: String,
     pub version: String,

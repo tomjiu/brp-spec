@@ -22,7 +22,6 @@
     "src/types.ts",
     "src/globals.d.ts",
     "src/handlers.ts",
-    "src/background.ts",
-    "tests/**/*.ts"
+    "src/background.ts"
   ]
 }
