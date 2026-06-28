@@ -75,6 +75,7 @@ export async function startBridge(): Promise<BridgeInfo> {
   return { port: BRIDGE_PORT, token: BRIDGE_TOKEN, process: proc };
 }
 
-export function stopBridge(info: BridgeInfo): void {
+export function stopBridge(info: BridgeInfo | undefined): void {
+  if (!info) return;
   info.process.kill("SIGTERM");
 }

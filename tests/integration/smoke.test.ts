@@ -16,7 +16,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   client?.close();
-  stopBridge(bridge);
+  if (bridge) stopBridge(bridge);
 });
 
 test.describe("Bridge Smoke Test", () => {
