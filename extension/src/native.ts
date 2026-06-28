@@ -104,10 +104,18 @@ export async function startBridge(): Promise<WebSocket> {
     );
   }
 
-  // 3. Keep port open — bridge process stays alive for WebSocket session
+  // 3. Store token to browser.storage.local so registration can use it
+  try {
+    await browser.storage.local.set({ brpAuthToken: rawMsg.token });
+    console.log("[BRP B1] Token stored");
+  } catch (e: unknown) {
+    console.warn("[BRP B1] Failed to store token:", e instanceof Error ? e.message : String(e));
+  }
+
+  // 4. Keep port open — bridge process stays alive for WebSocket session
   activePort = port;
 
-  // 4. Connect WebSocket
+  // 5. Connect WebSocket
   const wsUrl = `ws://127.0.0.1:${rawMsg.port}`;
   console.log("[BRP B1] Connecting WebSocket to", wsUrl);
 

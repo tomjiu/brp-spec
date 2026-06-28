@@ -33,6 +33,12 @@ let portMock: ReturnType<typeof mockPort>;
   runtime: {
     connectNative: vi.fn(() => portMock),
   },
+  storage: {
+    local: {
+      set: vi.fn(() => Promise.resolve()),
+      get: vi.fn(() => Promise.resolve({})),
+    },
+  },
 };
 
 // Mock WebSocket
