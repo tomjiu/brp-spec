@@ -1,7 +1,8 @@
 # BRP v0.3.0 Security Hardening Plan
 
-> Consolidated from multiple security audits, architecture reviews, and implementation discussions.
-> Date: 2026-06-27 | Status: Ready for Implementation
+> ⚠️ **This document is a v0.3.0 planning artifact.** All items listed were implemented in v0.3.0 (commit `80f8d6f`). See [`CHANGELOG.md`](../CHANGELOG.md) and [`SECURITY.md`](../SECURITY.md) for actual implementation status. Paths reference pre-v0.3.3 file layout and may be stale.
+>
+> Date: 2026-06-27 | Status: ✅ Implemented (v0.3.0)
 
 ---
 

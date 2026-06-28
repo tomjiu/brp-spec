@@ -4,6 +4,19 @@ Thank you for your interest in contributing to the Browser Runtime Protocol (BRP
 
 BRP is developed as an open protocol specification rather than a browser implementation. Contributions should focus on improving protocol interoperability, consistency, extensibility, and long-term stability.
 
+> ⚠️ **Note (v0.3.3)**: This repository is the **reference implementation** of BRP — it contains a production Firefox extension + Rust bridge, not just protocol specs. For protocol specification contributions, use the `docs/rfcs/` directory. For implementation contributions, see the [README](../README.md) project structure.
+
+## Repository Structure
+
+```text
+bridge/         Rust Bridge (WebSocket server, Native Messaging, JSON-RPC) — see bridge/src/
+extension/      Firefox Extension (TypeScript, Manifest V2) — see extension/src/
+adapter/        MCP adapter (Python/FastMCP)
+docs/rfcs/      Protocol specifications (RFC0000, RFC0001, RFC0002)
+tests/          E2E integration tests
+spikes/         Risk-reduction prototypes (B1 IPC spike, etc.)
+```
+
 ## Project Philosophy
 
 BRP follows several fundamental principles:
@@ -16,17 +29,6 @@ BRP follows several fundamental principles:
 - AI-oriented runtime abstraction
 
 When proposing changes, contributors should prioritize protocol simplicity and implementation interoperability over implementation-specific optimizations.
-
-## Repository Structure
-
-```text
-rfcs/           Protocol specifications
-docs/           Design documents
-schemas/        JSON Schemas
-examples/       Example protocol exchanges
-adapters/       Browser-specific mappings (future)
-sdk/            Client SDKs (future)
-```
 
 ## RFC Process
 

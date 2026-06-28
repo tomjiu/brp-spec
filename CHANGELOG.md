@@ -5,7 +5,54 @@ All notable changes to the BRP (Browser Runtime Protocol) project are documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] — 2026-06-27
+## [0.3.3] — 2026-06-28
+
+### v0.4.0-alpha: TypeScript Migration + Rust Modularization
+
+This release is a pure structural refactor — zero new features, zero behavior changes.
+
+#### Extension: JavaScript → TypeScript
+
+- **Background scripts**: `extension/background/background.js` + `handlers.js` → `extension/src/background.ts`, `handlers.ts`, `types.ts`. Strict mode with `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `useUnknownInCatchVariables`.
+- **Content scripts**: `extension/content/content.js` + `itree.js` → `extension/src/content.ts`, `itree.ts`, `types.content.ts`. Zero `as HTMLElement` casts — all element access uses `instanceof` type guards.
+- **Build pipeline**: esbuild bundles 4 entry points (`dist/background.js`, `dist/handlers.js`, `dist/content.js`, `dist/itree.js`). Build artifacts gitignored — must run `npm run build` before loading extension.
+- **Tests**: 75 unit tests (Vitest), updated to import TypeScript sources directly.
+
+#### Bridge: Modularization
+
+- **config.rs**: `BridgeConfig` — environment variable loading, token generation, file persistence.
+- **ws_server.rs**: WebSocket server, extension registration, message dispatch.
+- **router.rs**: Request routing, owns `BridgeState` exclusively. All other modules communicate via channels.
+- **native_msg.rs**: Stdin/stdout I/O loops.
+- **main.rs**: Thin orchestrator — reduced from 864 to 115 lines.
+
+#### ts-rs Integration
+
+- Six protocol types derive `#[derive(TS)]`: `SessionState`, `ClientInfo`, `Capabilities`, `InitializeParams`, `InitializeResult`, `ServerInfo`.
+- All wire types use `#[serde(rename_all = "camelCase")]` + `#[ts(rename_all = "camelCase")]` for consistent cross-language field naming.
+- Bindings generated to `bridge/bindings/*.ts`.
+
+#### Fixes
+
+- **JsonRpcRequest**: Tightened to JSON-RPC 2.0 spec — removed errant `error` field, made `jsonrpc`/`id`/`method` required.
+- **Version sync**: Cargo.toml, package.json, manifest.json all bumped to `0.3.3`.
+
+## [0.3.2] — 2026-06-27
+
+### B1 RFC Complete (§6-8) + Spike Improvements
+
+- **B1 IPC spike**: `spikes/b1-ipc-spike/` — Rust prototype demonstrating Unix Socket + Named Pipe IPC, PID lockfile with stale cleanup, and Windows Named Pipe ACL (DACL).
+- **Bridge cleanup**: Removed stale spike artifacts, added Windows PID support.
+- **RFC B1**: Sections 6-8 of the B1 Native Messaging Auto-Link RFC completed in `docs/rfcs/`.
+
+## [0.3.1] — 2026-06-27
+
+### Quality Foundation
+
+- **CI pipeline**: Rust (fmt + clippy + test + audit + deny) via GitHub Actions.
+- **RFC sections**: B1 RFC §§4-5 completed.
+- **Extension test suite**: Expanded to 73 unit tests covering pure logic module and async patterns.
+- **CI workflow structure**: `ci.yml` with `ci-pass` summary gate for required checks.
 
 ### Security Hardening
 

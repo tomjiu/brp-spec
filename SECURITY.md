@@ -51,44 +51,54 @@ These exist in the codebase today.
 
 - **WebSocket credential check on registration.** The extension's first frame
   must be a `register` message carrying a valid token; mismatches are rejected
-  and the socket is closed (`bridge/src/main.rs`, `run_ws_server`).
+  and the socket is closed (`bridge/src/ws_server.rs`, `register_extension`).
 - **Token file with restricted permissions.** The Bridge generates a UUID v4
   token at startup and writes it atomically with mode `0600` on Unix
-  (`generate_auth_token` in `bridge/src/main.rs`).
+  (`bridge/src/config.rs`, `BridgeConfig::load`).
 - **Reconnection backoff (client side).** The extension applies jittered
   reconnect delays and a larger backoff on auth failure
-  (`extension/background/background.js`). Note: this is a *client-side*
+  (`extension/src/background.ts`). Note: this is a *client-side*
   politeness measure and is **not** a server-side rate limit.
 - **Restricted-page guard.** Content scripts are not injected into `about:*`,
   `chrome:*`, `moz-extension:*`, etc.; such requests return
   `BRP_RESTRICTED_PAGE`.
 - **Script execution isolation.** `script.execute` uses the `Function`
   constructor (not `eval`) and enforces a 1 MB source size limit
-  (`extension/content/content.js`).
+  (`extension/src/content.ts`).
 - **Notification sequence numbers.** All notifications forwarded to the AI
   client carry a monotonic sequence number for gap detection.
+- **WebSocket Origin validation.** `accept_hdr_async` with custom
+  `OriginValidator` rejects connections from non-extension origins
+  (`bridge/src/ws_server.rs`).
+- **Server-side rate limiting.** `RateLimiter` enforces 10 connections/sec and
+  5 concurrent unauthenticated connections (`bridge/src/ratelimit.rs`).
+- **JSON-RPC message limits.** 4 MB max size, 32 max nesting depth, 1024 max
+  array length (`bridge/src/auth.rs`).
+- **Sensitive field redaction.** Password, hidden, and credit card fields
+  redacted in both Interaction Tree and `getAttribute` responses
+  (`extension/src/itree.ts`, `extension/src/content.ts`).
+- **Navigation sentinel.** `webNavigation.onBeforeNavigate` blocks non-http(s)
+  schemes on agent-controlled tabs (`extension/src/background.ts`).
+- **Constant-time token comparison.** Uses `subtle::ConstantTimeEq`
+  (`bridge/src/auth.rs`).
+- **script.execute gate.** Disabled by default; requires
+  `BRP_ALLOW_SCRIPT_EXECUTE=1` (`bridge/src/config.rs`).
 
 ## 4. Known risks / hardening backlog
 
-The following are **known gaps** being addressed by the roadmap in
-[`docs/SECURITY-ARCHITECTURE-DECISIONS.md`](docs/SECURITY-ARCHITECTURE-DECISIONS.md):
+The following items were addressed in v0.3.0 (see [CHANGELOG](CHANGELOG.md)).
+They remain documented here as a snapshot of the pre-v0.3.0 threat assessment.
 
-- The WebSocket handshake does **not** yet validate the `Origin` header, so a
-  malicious page can reach the server (it still needs the token, but the socket
-  is reachable). — *P0*
-- The auth-token HTTP endpoint serves with `Access-Control-Allow-Origin: *`,
-  allowing cross-origin token theft. The plan removes this endpoint. — *P0*
-- No **server-side** connection rate limiting; a local loop can exhaust CPU/FDs
-  even when connections are ultimately rejected. — *P0*
-- No JSON-RPC message size / nesting-depth / array-length limits at the
-  transport and parse layers. — *P1*
-- `element.getAttribute("value")` can read autofilled password fields; redaction
-  currently exists only in the Interaction Tree, not on every read path. — *P1*
-- URL-scheme validation only guards `page.navigate`; indirect navigation
-  (clicking `file:`/`javascript:` links) is not globally intercepted. — *P1*
-- `script.execute` is enabled by default. — *P2*
-- Token comparison is not constant-time. — *P2* (becomes mandatory if a
-  long-lived Standalone token is introduced).
+- ✅ **WebSocket Origin validation** — implemented in v0.3.0 (`bridge/src/ws_server.rs`).
+- ✅ **HTTP token endpoint removed** — eliminated in v0.3.0; token delivery via Native Messaging stdout only.
+- ✅ **Server-side connection rate limiting** — implemented in v0.3.0 (`bridge/src/ratelimit.rs`).
+- ✅ **JSON-RPC message size/depth limits** — implemented in v0.3.0 (`bridge/src/auth.rs`).
+- ✅ **Sensitive field redaction on all read paths** — implemented in v0.3.0 (ITree + `getAttribute`).
+- ✅ **URL-scheme sentinel (global onBeforeNavigate)** — implemented in v0.3.0 (`extension/src/background.ts`).
+- ✅ **script.execute disabled by default** — implemented in v0.3.0 (`bridge/src/config.rs`).
+- ✅ **Constant-time token comparison** — implemented in v0.3.0 (`bridge/src/auth.rs`).
+
+No unresolved P0/P1 security gaps remain as of v0.3.3.
 
 ## 5. Out of scope (accepted residual risks for v0.3.0)
 
