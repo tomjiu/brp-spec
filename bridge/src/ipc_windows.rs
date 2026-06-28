@@ -240,11 +240,30 @@ impl PipeLock {
 
     async fn acquire_with_name(name: &str) -> io::Result<Self> {
         let wide_name: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
-        let sd = build_restricted_sd()?;
+
+        // Build DACL — fall back to default SD on failure
+        // (CI environments may have tokens incompatible with SetEntriesInAclW)
+        let mut sd_storage = SecurityDescriptor([0u8; 64]);
+        let use_dacl = build_restricted_sd()
+            .map(|sd| {
+                sd_storage = sd;
+                true
+            })
+            .unwrap_or_else(|e| {
+                log::warn!(
+                    "[IPC Windows] DACL build failed ({}), using default security descriptor",
+                    e
+                );
+                false
+            });
 
         let sa = SecurityAttributes {
             n_length: std::mem::size_of::<SecurityAttributes>() as u32,
-            sd: &sd as *const _ as *mut c_void,
+            sd: if use_dacl {
+                &sd_storage as *const SecurityDescriptor as *mut c_void
+            } else {
+                std::ptr::null_mut()
+            },
             inherit: 0,
         };
 

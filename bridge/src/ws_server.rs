@@ -44,6 +44,30 @@ pub async fn run_ws_server(
     };
 
     log::info!("[WsServer] Listening on {} for Firefox Extension...", addr);
+    run_accept_loop(listener, auth_token, state, notify_tx).await;
+}
+
+/// Start the WebSocket server from a pre-bound TcpListener.
+/// Used by bootstrap mode which needs the OS-assigned port before starting.
+pub async fn run_ws_server_from_listener(
+    listener: TcpListener,
+    auth_token: Arc<String>,
+    state: Arc<RwLock<BridgeState>>,
+    notify_tx: mpsc::Sender<Value>,
+) {
+    let addr = listener
+        .local_addr()
+        .expect("bound listener should have addr");
+    log::info!("[WsServer] Listening on {} for Firefox Extension...", addr);
+    run_accept_loop(listener, auth_token, state, notify_tx).await;
+}
+
+async fn run_accept_loop(
+    listener: TcpListener,
+    auth_token: Arc<String>,
+    state: Arc<RwLock<BridgeState>>,
+    notify_tx: mpsc::Sender<Value>,
+) {
     log::info!("[WsServer] Token authentication ENABLED (mandatory)");
 
     let rate_limiter = Arc::new(Mutex::new(RateLimiter::new()));
