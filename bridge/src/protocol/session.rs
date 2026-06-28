@@ -49,7 +49,8 @@ pub struct ClientInfo {
 // ─── Capabilities ───
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../bindings/")]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export, export_to = "../bindings/")]
 pub struct Capabilities {
     #[serde(default)]
     pub features: Vec<String>,
