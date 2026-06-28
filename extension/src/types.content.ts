@@ -24,6 +24,7 @@ export interface ContentMessage {
   timeout?: number;
   attribute?: string;
   precondition?: Precondition;
+  acceptFallback?: boolean; // E4: enable fallback selector chain
 }
 
 // ─── Precondition (E3) ───
