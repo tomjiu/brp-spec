@@ -147,10 +147,6 @@ jobs:
         working-directory: tests/integration
         run: npm ci
 
-      - name: Install Playwright browsers
-        working-directory: tests/integration
-        run: npx playwright install firefox
-
       - name: Run integration tests
         working-directory: tests/integration
         run: npm test
