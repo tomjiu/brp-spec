@@ -2,4 +2,4 @@
 import type { Capabilities } from "./Capabilities";
 import type { ClientInfo } from "./ClientInfo";
 
-export type InitializeParams = { protocol_version: string, client_info: ClientInfo | null, capabilities: Capabilities | null, };
+export type InitializeParams = { protocolVersion: string, clientInfo: ClientInfo | null, capabilities: Capabilities | null, };
