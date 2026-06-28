@@ -7,6 +7,7 @@ import {
   validateTabId,
   validateUrl,
 } from "./handlers";
+import { startBridge } from "./native";
 import type { BridgeMessage, JsonObject, JsonRpcRequest, JsonValue, MessageId } from "./types";
 import { errorMessage, getBoolean, getNumber, getObject, getString, isJsonObject } from "./types";
 
@@ -81,15 +82,31 @@ function isJsonRpcMessage(value: unknown): value is JsonObject {
   return hasValidJsonrpc && ((hasValidMethod && hasValidParams) || (hasValidId && hasValidError));
 }
 
-function connect(): void {
+async function connect(): Promise<void> {
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
     return;
   }
 
+  // ── B1 Auto-Link (connectNative) ──
+  try {
+    console.log("[BRP] Trying B1 auto-link via connectNative...");
+    ws = await startBridge();
+    console.log("[BRP] B1 auto-link succeeded");
+    setupConnection(ws);
+    return;
+  } catch (e: unknown) {
+    const detail = e instanceof Error ? e.message : String(e);
+    console.warn("[BRP] B1 auto-link failed, falling back to manual config:", detail);
+  }
+
+  // ── Fallback: manual WebSocket (v0.3.x behavior) ──
   console.log("[BRP] Connecting to bridge at", WS_URL);
   ws = new WebSocket(WS_URL);
+  setupConnection(ws);
+}
 
-  ws.onopen = async (): Promise<void> => {
+function setupConnection(socket: WebSocket): void {
+  socket.onopen = async (): Promise<void> => {
     console.log("[BRP] Connected to bridge");
     reconnectAttempts = 0;
     authenticated = false;
@@ -119,11 +136,11 @@ function connect(): void {
         extensionVersion: "0.3.4",
       },
     });
-    ws?.send(registerMsg);
+    socket.send(registerMsg);
     console.log("[BRP] Registering as:", browserName, token ? "(with token)" : "(no token — Origin-only auth)");
   };
 
-  ws.onmessage = (event: MessageEvent<string>): void => {
+  socket.onmessage = (event: MessageEvent<string>): void => {
     try {
       const parsed: unknown = JSON.parse(event.data);
       if (!isJsonRpcMessage(parsed)) return;
@@ -132,7 +149,7 @@ function connect(): void {
       // Check for auth rejection error response before treating as a request
       if (!authenticated && isJsonObject(msg.error)) {
         console.error("[BRP] Bridge rejected registration:", getString(msg.error, "message"));
-        ws?.close(4001, "Auth failed");
+        socket.close(4001, "Auth failed");
         return;
       }
 
@@ -155,14 +172,14 @@ function connect(): void {
     }
   };
 
-  ws.onclose = (event: CloseEvent): void => {
+  socket.onclose = (event: CloseEvent): void => {
     const authFailed = event.code === 4001;
     console.warn("[BRP] Disconnected (code=%d%s)", event.code, authFailed ? ", auth failed" : "");
     ws = null;
     scheduleReconnect(authFailed);
   };
 
-  ws.onerror = (): void => {
+  socket.onerror = (): void => {
     console.error("[BRP] WebSocket error");
   };
 }

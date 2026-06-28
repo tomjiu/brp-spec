@@ -8,6 +8,7 @@
     "tabs",
     "webNavigation",
     "storage",
+    "nativeMessaging",
     "<all_urls>"
   ],
   "background": {

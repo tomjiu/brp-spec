@@ -14,5 +14,5 @@
     "outDir": "dist",
     "rootDir": "src"
   },
-  "include": ["src/types.content.ts", "src/itree.ts", "src/content.ts", "tests/**/*.ts"]
+  "include": ["src/types.content.ts", "src/itree.ts", "src/content.ts"]
 }
