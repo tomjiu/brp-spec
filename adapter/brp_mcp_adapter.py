@@ -41,7 +41,8 @@ _bridge_auth_token: Optional[str] = None  # Captured from Bridge's authToken not
 
 
 async def ensure_bridge(bridge_path: str, ws_addr: str):
-    """Spawn BRP Bridge as a child process if not already running."""
+    """Spawn BRP Bridge as a child process if not already running.
+    Returns the actual WS port (may differ from ws_addr when port=0 is used)."""
     global _bridge_proc, _reader_task
 
     if _bridge_proc and _bridge_proc.returncode is None:
@@ -60,8 +61,51 @@ async def ensure_bridge(bridge_path: str, ws_addr: str):
     )
     log.info("Bridge started (PID=%d, WS=%s)", _bridge_proc.pid, ws_addr)
 
-    # Start background reader for Bridge stdout
+    # Read first NM message — bridge may write {port, token} if random port
+    try:
+        header = await asyncio.wait_for(_bridge_proc.stdout.readexactly(4), timeout=5.0)
+        length = struct.unpack("<I", header)[0]
+        payload = await _bridge_proc.stdout.readexactly(length)
+        first_msg = json.loads(payload.decode("utf-8"))
+        bridge_port = first_msg.get("port")
+        bridge_token = first_msg.get("token")
+        if bridge_port is not None:
+            log.info("Bridge actual WS port: %s (was configured as %s)", bridge_port, ws_addr)
+            global _bridge_auth_token
+            _bridge_auth_token = bridge_token
+            log.info("Bridge auth token received from port message")
+        else:
+            # Not a port message (e.g. authToken notification for fixed port)
+            # Re-inject into reader for the background task to handle
+            log.debug("First message is not port info, delegating to reader")
+            # Can't easily re-inject; just handle it like the reader would
+            _dispatch_bridge_msg(first_msg)
+    except asyncio.TimeoutError:
+        log.warning("Bridge did not send port info within 5s (old version?)")
+    except asyncio.IncompleteReadError:
+        log.warning("Bridge stdout closed before sending port info")
+
+    # Start background reader for remaining Bridge stdout
     _reader_task = asyncio.create_task(_read_bridge_stdout())
+
+
+def _dispatch_bridge_msg(msg: dict):
+    """Handle a single bridge message (used for first message before reader task starts)."""
+    msg_id = msg.get("id")
+    if msg_id is not None and msg_id in _pending:
+        future = _pending.pop(msg_id)
+        if not future.done():
+            future.set_result(msg)
+        return
+
+    method = msg.get("method", "")
+    if method == "notification/bridge.authToken":
+        global _bridge_auth_token
+        params = msg.get("params", {})
+        _bridge_auth_token = params.get("token")
+        token_file = params.get("tokenFile", "")
+        log.info("Bridge auth token received (file: %s)", token_file)
+        log.info("Configure this token in the Extension Options page for authentication")
 
 
 async def _read_bridge_stdout():
@@ -76,27 +120,7 @@ async def _read_bridge_stdout():
             # Read JSON payload
             payload = await _bridge_proc.stdout.readexactly(length)
             msg = json.loads(payload.decode("utf-8"))
-
-            msg_id = msg.get("id")
-            if msg_id is not None and msg_id in _pending:
-                future = _pending.pop(msg_id)
-                if not future.done():
-                    future.set_result(msg)
-                continue
-
-            # Notification
-            method = msg.get("method", "")
-            if method == "notification/bridge.authToken":
-                global _bridge_auth_token
-                params = msg.get("params", {})
-                _bridge_auth_token = params.get("token")
-                token_file = params.get("tokenFile", "")
-                log.info("Bridge auth token received (file: %s)", token_file)
-                log.info("Configure this token in the Extension Options page for authentication")
-            elif method.startswith("notification/"):
-                log.info("BRP notification: %s", method)
-            else:
-                log.debug("Unhandled bridge message: %s", msg)
+            _dispatch_bridge_msg(msg)
 
     except asyncio.IncompleteReadError:
         log.warning("Bridge stdout closed")
