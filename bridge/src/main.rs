@@ -23,6 +23,8 @@ mod auth;
 mod config;
 #[cfg(unix)]
 mod ipc_unix;
+#[cfg(windows)]
+mod ipc_windows;
 mod mode;
 mod native_msg;
 mod protocol;
@@ -101,9 +103,9 @@ async fn run_echo() {
 async fn run_bootstrap() {
     let config = BridgeConfig::load();
 
-    // ── Acquire Unix socket lock (single-instance enforcement) ──
+    // ── Acquire IPC lock (single-instance enforcement) ──
     #[cfg(unix)]
-    let _socket_lock = {
+    let _ipc_lock = {
         match ipc_unix::acquire_socket_lock().await {
             Ok(lock) => {
                 log::info!("[Bootstrap] Unix socket lock acquired");
@@ -111,6 +113,20 @@ async fn run_bootstrap() {
             }
             Err(e) => {
                 log::error!("[Bootstrap] Failed to acquire socket lock: {}", e);
+                return;
+            }
+        }
+    };
+
+    #[cfg(windows)]
+    let _ipc_lock = {
+        match ipc_windows::acquire_pipe_lock().await {
+            Ok(lock) => {
+                log::info!("[Bootstrap] Windows pipe lock acquired");
+                Some(lock)
+            }
+            Err(e) => {
+                log::error!("[Bootstrap] Failed to acquire pipe lock: {}", e);
                 return;
             }
         }
