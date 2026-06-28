@@ -267,7 +267,7 @@ cd extension
 npm ci                       # Install dependencies
 npm run typecheck            # Strict type check
 npm run build                # Bundle TS → JS
-npm test                     # Run 73 unit tests (Vitest)
+npm test                     # Run 75 unit tests (Vitest)
 ```
 
 Test Bridge with a JSON-RPC client:
@@ -278,10 +278,10 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 ## Testing
 
 ```bash
-# Bridge unit tests (22 tests)
+# Bridge unit tests (23 tests, 29 with ts-rs export)
 cd bridge && cargo test
 
-# Extension unit tests (73 tests, Vitest)
+# Extension unit tests (75 tests, Vitest)
 cd extension && npm test
 
 # Bridge lint

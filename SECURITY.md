@@ -51,7 +51,7 @@ These exist in the codebase today.
 
 - **WebSocket credential check on registration.** The extension's first frame
   must be a `register` message carrying a valid token; mismatches are rejected
-  and the socket is closed (`bridge/src/main.rs`, `run_ws_server`).
+  and the socket is closed (`bridge/src/ws_server.rs`, `register_extension`).
 - **Token file with restricted permissions.** The Bridge generates a UUID v4
   token at startup and writes it atomically with mode `0600` on Unix
   (`bridge/src/config.rs`, `BridgeConfig::load`).

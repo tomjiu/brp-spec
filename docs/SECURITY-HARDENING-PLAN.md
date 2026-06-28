@@ -195,7 +195,7 @@ test_selector_length_limit()       — > 4096 chars rejected
 
 | File | Change |
 |------|--------|
-| `extension/content/itree.js` | Add `redactSensitiveValue(el)` function |
+| `extension/src/itree.ts` | Add `redactSensitiveValue(el)` function |
 
 **Redaction rules:**
 ```javascript
@@ -239,8 +239,8 @@ Add to ITree response:
 
 | File | Change |
 |------|--------|
-| `extension/content/itree.js` | Clear `nodeIdMap` at start of each `buildInteractionTree()` call |
-| `extension/content/itree.js` | Use revision counter: each build increments revision, stale nodeIds from previous revision are invalid |
+| `extension/src/itree.ts` | Clear `nodeIdMap` at start of each `buildInteractionTree()` call |
+| `extension/src/itree.ts` | Use revision counter: each build increments revision, stale nodeIds from previous revision are invalid |
 
 This ensures no strong references persist across page snapshots. Content script destruction on navigation already handles full cleanup.
 
