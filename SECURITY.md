@@ -54,17 +54,17 @@ These exist in the codebase today.
   and the socket is closed (`bridge/src/main.rs`, `run_ws_server`).
 - **Token file with restricted permissions.** The Bridge generates a UUID v4
   token at startup and writes it atomically with mode `0600` on Unix
-  (`generate_auth_token` in `bridge/src/main.rs`).
+  (`bridge/src/config.rs`, `BridgeConfig::load`).
 - **Reconnection backoff (client side).** The extension applies jittered
   reconnect delays and a larger backoff on auth failure
-  (`extension/background/background.js`). Note: this is a *client-side*
+  (`extension/src/background.ts`). Note: this is a *client-side*
   politeness measure and is **not** a server-side rate limit.
 - **Restricted-page guard.** Content scripts are not injected into `about:*`,
   `chrome:*`, `moz-extension:*`, etc.; such requests return
   `BRP_RESTRICTED_PAGE`.
 - **Script execution isolation.** `script.execute` uses the `Function`
   constructor (not `eval`) and enforces a 1 MB source size limit
-  (`extension/content/content.js`).
+  (`extension/src/content.ts`).
 - **Notification sequence numbers.** All notifications forwarded to the AI
   client carry a monotonic sequence number for gap detection.
 - **Native Messaging Auto-Link (v0.4.0 B1).** Planned: token provisioning via

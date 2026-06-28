@@ -1,7 +1,8 @@
 # BRP v0.3.0 Security Hardening Plan
 
-> Consolidated from multiple security audits, architecture reviews, and implementation discussions.
-> Date: 2026-06-27 | Status: Ready for Implementation
+> ⚠️ **This document is a v0.3.0 planning artifact.** All items listed were implemented in v0.3.0. Paths reference pre-v0.3.3 file layout and may be stale. See `CHANGELOG.md` and `SECURITY.md` for actual implementation status.
+>
+> Date: 2026-06-27 | Status: ✅ Implemented (v0.3.0)
 
 ---
 
@@ -34,8 +35,8 @@ Already implemented:
 | `bridge/src/main.rs` | Add `generate_challenge()` | Generate UUID v4 challenge, write to `BRP_TOKEN_FILE` (or platform default), return challenge string |
 | `bridge/src/main.rs` | Update registration validation | Accept `challenge` field in register params, verify against stored challenge, invalidate after first use (single-shot) |
 | `bridge/src/main.rs` | Add challenge expiry | Challenge expires after 60s if unused, Bridge generates new one on next connection attempt |
-| `extension/background/background.js` | Remove `fetchAuthToken()` HTTP fetch | Replace with file-based challenge reading |
-| `extension/background/background.js` | Update `connect()` registration | Read challenge from file, send as `challenge` param instead of `token` |
+| `extension/src/background.ts` | Remove `fetchAuthToken()` HTTP fetch | Replace with file-based challenge reading |
+| `extension/src/background.ts` | Update `connect()` registration | Read challenge from file, send as `challenge` param instead of `token` |
 | `tests/test_e2e.py` | Update registration | Read challenge file, send in registration message |
 
 ### Rust Unit Tests to Add
@@ -83,9 +84,9 @@ test_challenge_expiry()        — Verify challenge rejected after timeout
 
 | File | Change |
 |------|--------|
-| `extension/background/background.js` | Add `permissionGates` map: method → permission key |
-| `extension/background/background.js` | Add `checkPermission(method)` that reads from extension storage |
-| `extension/background/background.js` | In `handleRequest()`, gate new API methods behind permission check |
+| `extension/src/background.ts` | Add `permissionGates` map: method → permission key |
+| `extension/src/background.ts` | Add `checkPermission(method)` that reads from extension storage |
+| `extension/src/background.ts` | In `handleRequest()`, gate new API methods behind permission check |
 | `extension/options/options.html` (new) | Simple options page with toggle switches for each permission |
 | `extension/options/options.js` (new) | Read/write permission state to `browser.storage.local` |
 | `extension/manifest.json` | Add `"options_ui"` and `"storage"` permission |
@@ -113,9 +114,9 @@ AI Agent requests bookmarks.list
 
 | File | Change |
 |------|--------|
-| `extension/background/background.js` | Track `originDomain` from the initial `page.navigate` or current active tab |
-| `extension/background/background.js` | Add `isStrayNavigation(url)` — checks if target domain differs from origin domain |
-| `extension/background/background.js` | When stray detected on `page.navigate`, log warning but allow (not hard-block) |
+| `extension/src/background.ts` | Track `originDomain` from the initial `page.navigate` or current active tab |
+| `extension/src/background.ts` | Add `isStrayNavigation(url)` — checks if target domain differs from origin domain |
+| `extension/src/background.ts` | When stray detected on `page.navigate`, log warning but allow (not hard-block) |
 | `bridge/src/main.rs` | Add `strayNavigationCount` to session stats for auditability |
 
 **This is a soft constraint (audit + log), not a hard block.** Hard blocking navigation would break legitimate workflows (e.g., OAuth flows that redirect to external providers). The constraint serves as:
@@ -130,8 +131,8 @@ AI Agent requests bookmarks.list
 | File | Change |
 |------|--------|
 | `extension/options/options.html` | Add domain blocklist input (add/remove domains) |
-| `extension/background/background.js` | Read blocklist from `browser.storage.local` |
-| `extension/background/background.js` | Update `sendToContentScript()` to check blocklist before `script.execute` and `element.fill` |
+| `extension/src/background.ts` | Read blocklist from `browser.storage.local` |
+| `extension/src/background.ts` | Update `sendToContentScript()` to check blocklist before `script.execute` and `element.fill` |
 
 **Behavior on blocked domain:**
 - `script.execute` → `BRP_USER_BLOCKED_DOMAIN` error
@@ -146,9 +147,9 @@ AI Agent requests bookmarks.list
 |------|--------|
 | `bridge/src/main.rs` | Read `BRP_ENABLE_SCRIPT_EXECUTE` env var (default `0`) |
 | `bridge/src/main.rs` | When disabled, reject `script.execute` with `BRP_FEATURE_DISABLED` error |
-| `extension/background/background.js` | Read env via Bridge capability response; hide `script.execute` from capabilities when disabled |
+| `extension/src/background.ts` | Read env via Bridge capability response; hide `script.execute` from capabilities when disabled |
 | `adapter/brp_mcp_adapter.py` | Conditionally register `brp_execute` tool based on capability check |
-| `extension/content/content.js` | Already has size limit (1MB); add result size limit (truncate responses > 256KB) |
+| `extension/src/content.ts` | Already has size limit (1MB); add result size limit (truncate responses > 256KB) |
 
 ### Outcome
 
@@ -167,13 +168,13 @@ AI Agent requests bookmarks.list
 
 | Validation | File | Rule |
 |------------|------|------|
-| `page.navigate` URL scheme | `extension/background/background.js` | Only `http:` and `https:` allowed. Reject `file:`, `chrome:`, `about:`, `javascript:`, `data:` with `BRP_FORBIDDEN_SCHEME` |
-| `waitForSelector.timeout` | `extension/content/content.js` | Hard cap at 60000ms. Values above cap are clamped. |
-| `tabId` range | `extension/background/background.js` | Must be positive integer, reject negative/NaN/non-number |
-| `pageIdx` range | `extension/background/background.js` | Must be non-negative integer |
-| Selector length | `extension/background/background.js` | Max 4096 chars for CSS/XPath selectors |
-| `element.select` values | `extension/content/content.js` | Max 100 values in array |
-| `keyboard.press` key | `extension/content/content.js` | Max 64 chars, must contain at least one non-modifier key |
+| `page.navigate` URL scheme | `extension/src/background.ts` | Only `http:` and `https:` allowed. Reject `file:`, `chrome:`, `about:`, `javascript:`, `data:` with `BRP_FORBIDDEN_SCHEME` |
+| `waitForSelector.timeout` | `extension/src/content.ts` | Hard cap at 60000ms. Values above cap are clamped. |
+| `tabId` range | `extension/src/background.ts` | Must be positive integer, reject negative/NaN/non-number |
+| `pageIdx` range | `extension/src/background.ts` | Must be non-negative integer |
+| Selector length | `extension/src/background.ts` | Max 4096 chars for CSS/XPath selectors |
+| `element.select` values | `extension/src/content.ts` | Max 100 values in array |
+| `keyboard.press` key | `extension/src/content.ts` | Max 64 chars, must contain at least one non-modifier key |
 
 ### Rust Unit Tests to Add
 
