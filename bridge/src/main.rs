@@ -25,6 +25,7 @@ mod config;
 mod ipc_unix;
 #[cfg(windows)]
 mod ipc_windows;
+mod lockfile;
 mod mode;
 mod native_msg;
 mod protocol;
@@ -103,7 +104,7 @@ async fn run_echo() {
 async fn run_bootstrap() {
     let config = BridgeConfig::load();
 
-    // ── Acquire IPC lock (single-instance enforcement) ──
+    // ── 1. Acquire IPC lock (single-instance enforcement) ──
     #[cfg(unix)]
     let _ipc_lock = {
         match ipc_unix::acquire_socket_lock().await {
@@ -132,8 +133,52 @@ async fn run_bootstrap() {
         }
     };
 
+    // ── 2. Start WebSocket server on port 0 (OS-assigned port) ──
+    let state = Arc::new(RwLock::new(BridgeState::new()));
+    let auth_token = Arc::new(config.auth_token.clone());
+    let (notify_tx, _notify_rx) = mpsc::channel::<serde_json::Value>(64);
+
+    let ws_addr = {
+        let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+            Ok(l) => l,
+            Err(e) => {
+                log::error!("[Bootstrap] Failed to bind WS port: {}", e);
+                return;
+            }
+        };
+        let addr = listener
+            .local_addr()
+            .expect("bound socket should have addr");
+        let ws_port = addr.port();
+        log::info!("[Bootstrap] WS server on 127.0.0.1:{}", ws_port);
+
+        // Spawn WS server with the bound listener
+        {
+            let state = state.clone();
+            let notify_tx = notify_tx.clone();
+            let auth_token = auth_token.clone();
+            tokio::spawn(async move {
+                ws_server::run_ws_server_from_listener(listener, auth_token, state, notify_tx)
+                    .await;
+            });
+        }
+
+        addr
+    };
+
+    // ── 3. Acquire PID lockfile ──
+    let lock_data = lockfile::LockData {
+        pid: std::process::id(),
+        port: ws_addr.port(),
+    };
+    if let Err(e) = lockfile::acquire(lock_data.clone()) {
+        log::error!("[Bootstrap] Failed to acquire lockfile: {}", e);
+        return;
+    }
+
+    // ── 4. Send token with real port ──
     let token_msg = json!({
-        "port": 0,  // TODO(PR #22): fill real WS port from lockfile
+        "port": ws_addr.port(),
         "token": config.auth_token
     });
 
@@ -141,12 +186,13 @@ async fn run_bootstrap() {
 
     if let Err(e) = crate::transport::send_native_message(&token_msg).await {
         log::error!("[Bootstrap] Failed to send token: {}", e);
+        lockfile::release();
         return;
     }
 
     log::info!("[Bootstrap] Token delivered, hanging as keepalive...");
 
-    // Wait for either Ctrl+C OR stdin EOF (Firefox disconnects connectNative port)
+    // ── 5. Wait for Ctrl+C or stdin EOF ──
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             log::info!("[Bootstrap] Ctrl+C received");
@@ -157,6 +203,8 @@ async fn run_bootstrap() {
             log::info!("[Bootstrap] stdin EOF — Firefox disconnected, exiting");
         }
     }
+
+    lockfile::release();
     log::info!("[Bootstrap] Exiting");
 }
 
