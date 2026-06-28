@@ -5,6 +5,46 @@ All notable changes to the BRP (Browser Runtime Protocol) project are documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] — 2026-06-28
+
+### E3: DOM Precondition Validation
+
+AI can now attach `precondition` to element actions (click/type/fill/hover/select). Extension validates the target element matches before executing, rejects with `BRP_PRECONDITION_FAILED` on mismatch.
+
+- New `Precondition` type: `tagName` (case-insensitive), `textContains`, `attributes`
+- New error code: `BRP_PRECONDITION_FAILED` with actual element info (tagName, textContent, attributes)
+- New `extension/src/precondition.ts`: `validatePrecondition()` pure logic module
+- 9 JS DOM unit tests
+- Optional field, backward compatible
+
+### E4: Context Recovery Pipeline
+
+When a selector fails, automatically retry via fallback chain: `nodeId → role → css → xpath → coordinate → text`. AI opts in with `acceptFallback: true`.
+
+- New `extension/src/selector-fallback.ts`: `findElementWithFallback()`
+- Returns `matchedSelector: {type}` to tell AI which selector actually matched
+- 7 JS DOM unit tests
+- Optional field, backward compatible (default `false`)
+
+### Bridge Mode Random Port
+
+Bridge mode now supports `BRP_WS_ADDR=127.0.0.1:0` for OS-assigned random port. Multiple MCP clients can coexist without port conflict. Fixed port (`9817`) still default for backward compat. Adapter reads actual port from bridge's first stdout message.
+
+### Tech Debt: TS Migration Cleanup
+
+- `extension/tests/*.test.js` → `.ts` (554 lines)
+- `extension/options/options.js` → `options.ts` (88 lines)
+- GitHub JS percentage: ~9.6% → ~1.2%
+- Pure refactor, zero behavior change
+
+### CI Stability
+
+- 3 flaky Windows pipe tests (DACL error 1336 on CI runner) marked `#[ignore]`, pass on real Windows
+
+### Breaking Changes
+
+None. All new features are optional fields with backward-compatible defaults.
+
 ## [0.4.0] — 2026-06-28
 
 ### B1: Native Messaging Auto-Link

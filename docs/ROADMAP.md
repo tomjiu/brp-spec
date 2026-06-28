@@ -73,9 +73,12 @@
 - [x] **PR #23** Extension connectNative + auto-link (token via stdout, WS auto-connect)
 - [x] **PR #17** This implementation plan document itself
 
-## v0.4.1 — DOM Interaction Reliability [ ]
+## v0.4.1 — DOM Interaction Reliability [x]
 
-- [ ] **E3** DOM Precondition validation (tagName, textContains, attributes)
+- [x] **E3** DOM Precondition validation (tagName, textContains, attributes)
+- [x] **E4** Context Recovery Pipeline (selector fallback chain)
+- [x] **PR #27** Bridge Mode Random Port Support
+- [x] **PR #26** TS Migration Cleanup (JS → TS)
 - [ ] **E4** Context Recovery Pipeline (selector fallback chain, acceptFallback opt-in)
 
 ## v0.4.2 — Multi-Instance [ ]

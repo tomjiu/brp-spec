@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "BRP Bridge Extension",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Browser Runtime Protocol - Firefox Extension for AI agent interaction",
   "permissions": [
     "activeTab",
