@@ -22,7 +22,8 @@ fn socket_path() -> PathBuf {
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
         PathBuf::from(dir).join("brp-bridge.sock")
     } else {
-        // macOS doesn't set XDG_RUNTIME_DIR; use /tmp with UID to avoid collisions
+        // macOS doesn't set XDG_RUNTIME_DIR; use /tmp with UID to avoid collisions.
+        // SAFETY: getuid() always succeeds and has no side effects on Unix.
         let uid = unsafe { libc::getuid() };
         PathBuf::from(format!("/tmp/brp-bridge-{}.sock", uid))
     }
@@ -36,11 +37,13 @@ pub struct SocketLock {
 }
 
 impl SocketLock {
-    /// Try to acquire the socket lock. Returns Ok if we're the sole owner.
-    /// Returns Err(already_running) if another bridge holds the lock.
-    /// Automatically cleans up stale sockets (process died without cleanup).
+    /// Try to acquire the socket lock at the well-known production path.
     pub async fn acquire() -> std::io::Result<Self> {
-        let path = socket_path();
+        Self::acquire_with_path(socket_path()).await
+    }
+
+    /// Internal: acquire the socket lock at an arbitrary path (for testing).
+    async fn acquire_with_path(path: PathBuf) -> std::io::Result<Self> {
         log::info!("[IPC Unix] Socket path: {}", path.display());
 
         match UnixListener::bind(&path) {
@@ -53,14 +56,12 @@ impl SocketLock {
             }
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
                 log::warn!("[IPC Unix] Socket in use, checking if stale...");
-                // Try to connect — if successful, another bridge is alive
                 match tokio::net::UnixStream::connect(&path).await {
                     Ok(_) => Err(std::io::Error::new(
                         std::io::ErrorKind::AddrInUse,
                         format!("Bridge already running (socket: {})", path.display()),
                     )),
                     Err(_) => {
-                        // Connection refused → stale socket
                         log::warn!(
                             "[IPC Unix] Detected stale socket, cleaning up: {}",
                             path.display()
@@ -97,14 +98,18 @@ impl SocketLock {
         }
     }
 
-    /// Check if a bridge is currently holding the socket (non-destructive).
+    /// Check if a bridge is currently holding the well-known socket.
     /// Used by bridge mode to verify bootstrap is alive before starting WS.
+    // TODO(PR #22): use in bridge mode startup
+    #[allow(dead_code)]
     pub async fn is_bridge_running() -> bool {
-        let path = socket_path();
+        Self::is_bridge_running_at(socket_path()).await
+    }
+
+    async fn is_bridge_running_at(path: PathBuf) -> bool {
         if !path.exists() {
             return false;
         }
-        // Try to connect — if someone accepts, a bridge is alive
         tokio::net::UnixStream::connect(&path).await.is_ok()
     }
 }
@@ -124,6 +129,16 @@ pub async fn acquire_socket_lock() -> std::io::Result<Arc<Mutex<SocketLock>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// Unique socket path per test — prevents parallel-test collisions.
+    fn unique_test_path() -> PathBuf {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let pid = std::process::id();
+        PathBuf::from(format!("/tmp/brp-test-{}-{}.sock", pid, id))
+    }
 
     #[test]
     fn test_socket_path_generation() {
@@ -138,7 +153,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_socket_creation_and_release() {
-        let lock = SocketLock::acquire().await;
+        let lock = SocketLock::acquire_with_path(unique_test_path()).await;
         assert!(
             lock.is_ok(),
             "first acquire should succeed: {:?}",
@@ -157,10 +172,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_double_acquire_fails() {
-        let lock1 = SocketLock::acquire().await;
+        let path = unique_test_path();
+        let lock1 = SocketLock::acquire_with_path(path.clone()).await;
         assert!(lock1.is_ok(), "first acquire should succeed");
 
-        let lock2 = SocketLock::acquire().await;
+        let lock2 = SocketLock::acquire_with_path(path).await;
         assert!(lock2.is_err(), "second acquire should fail");
         assert!(
             lock2
@@ -172,22 +188,20 @@ mod tests {
 
         // Cleanup
         drop(lock1);
-        // Re-acquire to force cleanup
-        let _cleanup = SocketLock::acquire().await;
     }
 
     #[tokio::test]
-    async fn test_is_bridge_running() {
-        let lock = SocketLock::acquire().await.unwrap();
+    async fn test_is_bridge_running_detection() {
+        let path = unique_test_path();
+        let lock = SocketLock::acquire_with_path(path.clone()).await.unwrap();
         assert!(
-            SocketLock::is_bridge_running().await,
+            SocketLock::is_bridge_running_at(path.clone()).await,
             "should detect running bridge"
         );
         drop(lock);
-        // Give OS a moment to release
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
         assert!(
-            !SocketLock::is_bridge_running().await,
+            !SocketLock::is_bridge_running_at(path).await,
             "should not detect bridge after release"
         );
     }
