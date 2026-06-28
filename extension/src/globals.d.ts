@@ -5,6 +5,7 @@ declare const console: {
 };
 
 declare function setTimeout(handler: () => void, timeout?: number): number;
+declare function clearTimeout(id: ReturnType<typeof setTimeout>): void;
 
 declare const navigator: {
   readonly userAgent: string;

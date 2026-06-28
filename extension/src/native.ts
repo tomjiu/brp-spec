@@ -9,10 +9,6 @@
  * - 5d: Broken native manifest → no token message → 3-second timeout (PR #17)
  */
 
-// clearTimeout is available in Firefox extension background context
-// but not in the ES2022 type lib used by tsconfig.json.
-declare function clearTimeout(id: ReturnType<typeof setTimeout>): void;
-
 const NATIVE_APP_NAME = "org.brp.bridge";
 const TOKEN_TIMEOUT_MS = 3000;
 

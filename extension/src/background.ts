@@ -198,7 +198,7 @@ function scheduleReconnect(authFailed = false): void {
   console.log("[BRP] Reconnect in %dms (attempt %d%s)", delay, reconnectAttempts, authFailed ? ", auth failed" : "");
   reconnectTimer = setTimeout((): void => {
     reconnectTimer = null;
-    connect();
+    void connect();
   }, delay);
 }
 
@@ -567,4 +567,4 @@ function isJsonValue(value: unknown): value is JsonValue {
   return false;
 }
 
-connect();
+void connect();

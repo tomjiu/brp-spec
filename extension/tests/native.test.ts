@@ -5,7 +5,7 @@
  * These are unit tests — they mock the browser API without real Firefox.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startBridge } from "../src/native";
 
 // ─── Mock browser API ───
@@ -70,6 +70,9 @@ describe("startBridge", () => {
 
     // Simulate bridge delivering token
     portMock._deliver({ port: 19817, token: "test-uuid" });
+
+    // Advance timers to trigger mock WebSocket onopen (0ms setTimeout)
+    await vi.advanceTimersByTimeAsync(10);
 
     const ws = await wsPromise;
     expect(ws).toBeInstanceOf(MockWebSocket);
