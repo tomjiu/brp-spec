@@ -44,15 +44,15 @@
 - [x] **B1 RFC** §4 Installation & Distribution (install.sh, --install, manifest paths)
 - [x] **B1 RFC** §5 Token Bootstrap Protocol (IPC message format, token reusability)
 
-## v0.3.2 — B1 RFC Finalization [ ]
+## v0.3.2 — B1 RFC Finalization [x]
 
 - [ ] **B1 RFC** §6 Extension-Side Implementation (connectNative timing, supportsAutoLink)
 - [ ] **B1 RFC** §7 Crash Recovery & Reconnection (browserId, heartbeat, exponential backoff)
 - [ ] **B1 RFC** §8 Multi-Browser Support (Firefox + Zen manifest coexistence)
 - [ ] **B1 Spike** Stale socket/lockfile cleanup: automated test (bridge crash → bootstrap detects → cleans)
 - [ ] **B1 Spike** Windows PID liveness check (OpenProcess + GetExitCodeProcess)
-- [ ] **B1 Spike** Cross-platform validation (Linux + macOS + Windows)
-- [ ] install.sh / install.ps1 draft
+- [x] **B1 Spike** Cross-platform validation (Linux + macOS + Windows)
+- [x] install.sh / install.ps1 draft
 
 ## v0.4.0-alpha — TypeScript Migration (pure refactor, zero new features) [x]
 

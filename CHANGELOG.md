@@ -5,6 +5,66 @@ All notable changes to the BRP (Browser Runtime Protocol) project are documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] — 2026-06-28
+
+### Install Scripts
+
+- **install.sh**: Linux/macOS native messaging host installer — copies manifest, replaces placeholder with real binary path, browser auto-detection, `--uninstall` flag.
+- **install.ps1**: Windows native messaging registry installer (`HKCU\Software\Mozilla\NativeMessagingHosts\org.brp.bridge`), UTF-8 no-BOM manifest, persistent `%LOCALAPPDATA%` path.
+
+### CI
+
+- **Triple-OS matrix**: Rust CI runs `cargo fmt --check` + `cargo clippy` + `cargo test` on ubuntu-latest, macos-latest, and windows-latest. `cargo audit` and `cargo deny` remain ubuntu-only.
+
+## [0.3.3] — 2026-06-28
+
+### v0.4.0-alpha: TypeScript Migration + Rust Modularization
+
+Pure structural refactor — zero new features, zero behavior changes.
+
+#### Extension: JavaScript → TypeScript
+
+- Background scripts and content scripts migrated to strict TypeScript with esbuild build pipeline.
+- Zero `as HTMLElement` casts — all element access uses `instanceof` type guards.
+- Two tsconfigs: background (`ES2022` lib) and content (`ES2022` + `DOM` lib).
+- Tests: 75 unit tests (Vitest).
+
+#### Bridge: Modularization
+
+- **config.rs**: `BridgeConfig` — environment variable loading, token generation, file persistence.
+- **ws_server.rs**: WebSocket server, extension registration, message dispatch.
+- **router.rs**: Request routing, owns `BridgeState` exclusively. All other modules via channels.
+- **native_msg.rs**: Stdin/stdout I/O loops.
+- **main.rs**: Thin orchestrator — reduced from 864 to 115 lines.
+
+#### ts-rs Integration
+
+- Six protocol types derive `#[derive(TS)]` with consistent `rename_all = "camelCase"`.
+- Bindings generated to `bridge/bindings/*.ts`.
+
+#### Fixes
+
+- `JsonRpcRequest` tightened to JSON-RPC 2.0 spec.
+- All wire types use `serde(rename_all = "camelCase")` + `ts(rename_all = "camelCase")`.
+- Version sync: Cargo.toml, package.json, manifest.json unified.
+
+## [0.3.2] — 2026-06-27
+
+### B1 RFC §6-8 + Spike Improvements
+
+- B1 IPC spike (`spikes/b1-ipc-spike/`): Unix Socket + Named Pipe IPC, PID lockfile with stale cleanup, Windows Named Pipe ACL (DACL).
+- RFC B1 sections 6-8 completed in `docs/rfcs/`.
+- Bridge cleanup: removed stale spike artifacts, added Windows PID support.
+
+## [0.3.1] — 2026-06-27
+
+### Quality Foundation
+
+- CI pipeline: Rust (fmt + clippy + test + audit + deny) via GitHub Actions.
+- B1 RFC §§4-5 completed.
+- Extension test suite expanded.
+- CI workflow with `ci-pass` summary gate.
+
 ## [0.3.0] — 2026-06-27
 
 ### Security Hardening
