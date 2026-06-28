@@ -133,7 +133,7 @@ function setupConnection(socket: WebSocket): void {
         browserId: browserName,
         token: token || "",
         userAgent: navigator.userAgent,
-        extensionVersion: "0.4.0",
+        extensionVersion: "0.4.1",
       },
     });
     socket.send(registerMsg);
