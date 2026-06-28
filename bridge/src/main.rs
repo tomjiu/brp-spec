@@ -21,6 +21,8 @@
 /// Security detail: see SECURITY.md and docs/SECURITY-ARCHITECTURE-DECISIONS.md
 mod auth;
 mod config;
+#[cfg(unix)]
+mod ipc_unix;
 mod mode;
 mod native_msg;
 mod protocol;
@@ -98,8 +100,24 @@ async fn run_echo() {
 
 async fn run_bootstrap() {
     let config = BridgeConfig::load();
+
+    // ── Acquire Unix socket lock (single-instance enforcement) ──
+    #[cfg(unix)]
+    let _socket_lock = {
+        match ipc_unix::acquire_socket_lock().await {
+            Ok(lock) => {
+                log::info!("[Bootstrap] Unix socket lock acquired");
+                Some(lock)
+            }
+            Err(e) => {
+                log::error!("[Bootstrap] Failed to acquire socket lock: {}", e);
+                return;
+            }
+        }
+    };
+
     let token_msg = json!({
-        "port": 0,  // TODO(PR #21): fill real WS port from lockfile
+        "port": 0,  // TODO(PR #22): fill real WS port from lockfile
         "token": config.auth_token
     });
 
