@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Triple-OS matrix**: Rust CI runs `cargo fmt --check` + `cargo clippy` + `cargo test` on ubuntu-latest, macos-latest, and windows-latest. `cargo audit` and `cargo deny` remain ubuntu-only.
 
+This release marks the completion of the v0.3.x series. Next: v0.4.0 B1 implementation (Native Messaging Auto-Link).
+
 ## [0.3.3] — 2026-06-28
 
 ### v0.4.0-alpha: TypeScript Migration + Rust Modularization
@@ -52,7 +54,7 @@ Pure structural refactor — zero new features, zero behavior changes.
 
 ### B1 RFC §6-8 + Spike Improvements
 
-- B1 IPC spike (`spikes/b1-ipc-spike/`): Unix Socket + Named Pipe IPC, PID lockfile with stale cleanup, Windows Named Pipe ACL (DACL).
+- B1 IPC spike (`spikes/b1-ipc-spike/`): Unix Socket + Named Pipe IPC, PID lockfile with stale cleanup, Windows PID liveness check (OpenProcess + GetExitCodeProcess). Windows Named Pipe ACL (DACL) deferred to v0.4.0 production — see spike README.
 - RFC B1 sections 6-8 completed in `docs/rfcs/`.
 - Bridge cleanup: removed stale spike artifacts, added Windows PID support.
 
