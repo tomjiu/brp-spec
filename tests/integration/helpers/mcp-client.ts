@@ -1,67 +1,89 @@
 /**
- * MCP Client helper — connects to BRP Bridge via WebSocket
- * and sends JSON-RPC 2.0 requests.
+ * Native Messaging MCP Client — talks to BRP Bridge via stdin/stdout.
+ *
+ * Spawns bridge process and communicates using Native Messaging format:
+ * 4-byte LE length prefix + JSON-rpc 2.0 payload.
+ *
+ * This is the same protocol the MCP adapter uses — the correct way
+ * for MCP clients to talk to the bridge.
  */
 
-import WebSocket from "ws";
+import { spawn, type ChildProcess } from "child_process";
+import path from "path";
+import fs from "fs";
+
+const BRIDGE_BINARY = (() => {
+  if (process.env.BRP_BRIDGE_PATH) return process.env.BRP_BRIDGE_PATH;
+  const base = path.resolve(__dirname, "../../../bridge/target/release");
+  if (process.platform === "win32") return path.join(base, "brp-bridge.exe");
+  return path.join(base, "brp-bridge");
+})();
 
 export class McpClient {
-  private ws: WebSocket;
-  private requestId: number = 0;
-  private pending: Map<number, {
-    resolve: (value: unknown) => void;
-    reject: (error: Error) => void;
-  }> = new Map();
+  private proc: ChildProcess;
+  private requestId = 0;
+  private pending = new Map<number, { resolve: Function; reject: Function }>();
+  private stderr = "";
 
-  constructor(port: number) {
-    this.ws = new WebSocket(`ws://127.0.0.1:${port}`);
+  constructor() {
+    if (!fs.existsSync(BRIDGE_BINARY)) {
+      throw new Error(`Bridge binary not found: ${BRIDGE_BINARY}`);
+    }
+
+    this.proc = spawn(BRIDGE_BINARY, ["--mode=bridge"], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        BRP_WS_ADDR: "127.0.0.1:9817",
+      },
+    });
+
+    this.proc.on("error", (err: Error) => {
+      console.error(`[bridge] spawn error: ${err.message}`);
+    });
+
+    this.proc.stderr?.on("data", (d: Buffer) => {
+      this.stderr += d.toString();
+    });
+
+    this.readLoop();
   }
 
-  async connect(timeoutMs = 5000): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("WS connect timeout")), timeoutMs);
-      this.ws.on("open", () => {
-        clearTimeout(timer);
-        resolve();
-      });
-      this.ws.on("error", (err) => {
-        clearTimeout(timer);
-        reject(err);
-      });
-      this.ws.on("message", (data: Buffer) => {
+  private readLoop() {
+    let buffer = Buffer.alloc(0);
+    this.proc.stdout!.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length >= 4) {
+        const msgLen = buffer.readUInt32LE(0);
+        if (buffer.length < 4 + msgLen) break;
+        const json = buffer.slice(4, 4 + msgLen).toString();
+        buffer = buffer.slice(4 + msgLen);
+
         try {
-          const msg = JSON.parse(data.toString());
+          const msg = JSON.parse(json);
           const id = msg.id;
           if (id !== undefined && this.pending.has(id)) {
             const { resolve } = this.pending.get(id)!;
             this.pending.delete(id);
             resolve(msg);
           }
-        } catch {
-          // ignore parse errors
+        } catch (e) {
+          console.error("[mcp-client] parse error:", e);
         }
-      });
-    });
-  }
-
-  async initialize(): Promise<Record<string, unknown>> {
-    return this.send("initialize", {
-      protocolVersion: "0.1.0",
-      clientInfo: { name: "brp-integration-test", version: "0.4.2" },
-      capabilities: {
-        features: ["interactionTree", "events", "screenshot"],
-        actions: ["page.*", "tab.*", "element.click"],
-      },
+      }
     });
   }
 
   async send(method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
     const id = ++this.requestId;
     const msg = { jsonrpc: "2.0", id, method, params };
+    const json = Buffer.from(JSON.stringify(msg), "utf-8");
+    const lenBuf = Buffer.alloc(4);
+    lenBuf.writeUInt32LE(json.length, 0);
 
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject });
-      this.ws.send(JSON.stringify(msg));
+      this.pending.set(id, { resolve: resolve as Function, reject });
+      this.proc.stdin!.write(Buffer.concat([lenBuf, json]));
 
       setTimeout(() => {
         if (this.pending.has(id)) {
@@ -73,6 +95,6 @@ export class McpClient {
   }
 
   close(): void {
-    this.ws.close();
+    this.proc.kill("SIGTERM");
   }
 }

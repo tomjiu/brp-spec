@@ -1,51 +1,60 @@
 /**
- * Phase 1 Smoke Test — Bridge Startup + WS + Initialize
+ * Phase 1 Smoke Test — Bridge Native Messaging + JSON-RPC
+ *
+ * Spawns bridge and communicates via stdin/stdout Native Messaging format,
+ * the same protocol used by the MCP adapter.
  */
 
 import { test, expect } from "@playwright/test";
-import { startBridge, stopBridge, type BridgeInfo } from "./helpers/bridge";
 import { McpClient } from "./helpers/mcp-client";
 
-let bridge: BridgeInfo;
 let client: McpClient;
 
 test.beforeAll(async () => {
-  bridge = await startBridge();
-  client = new McpClient(bridge.port);
+  client = new McpClient();
+  // Give bridge a moment to start
+  await new Promise((r) => setTimeout(r, 2000));
 });
 
 test.afterAll(async () => {
   client?.close();
-  if (bridge) stopBridge(bridge);
 });
 
-test.describe("Bridge Smoke Test", () => {
-
-  test("should start bridge process", () => {
-    expect(bridge.process.pid).toBeGreaterThan(0);
-    expect(bridge.port).toBe(9817);
-  });
-
-  test("should establish WebSocket connection", async () => {
-    await client.connect();
-  }, 10000);
+test.describe("Bridge Smoke Test (Native Messaging)", () => {
 
   test("should respond to initialize handshake", async () => {
-    await client.connect();
-    const response = await client.initialize();
+    const response = await client.send("initialize", {
+      protocolVersion: "0.1.0",
+      clientInfo: { name: "brp-integration-test", version: "0.4.2" },
+    });
     expect(response.jsonrpc).toBe("2.0");
     expect(response.result).toBeDefined();
     const result = response.result as Record<string, unknown>;
-    expect(result.sessionId).toBeDefined();
+    expect(result.sessionId).toMatch(/^session-/);
     expect(result.protocolVersion).toBeDefined();
     expect(result.serverInfo).toBeDefined();
   }, 10000);
 
-  test("should respond to browser.list", async () => {
-    await client.connect();
+  test("should return empty browser list (no extension connected)", async () => {
     const response = await client.send("browser.list", {});
     expect(response.result).toBeDefined();
     const result = response.result as Record<string, unknown>;
     expect(Array.isArray(result.browsers)).toBe(true);
+    expect(result.browsers).toHaveLength(0);
+    expect(result.count).toBe(0);
+  }, 10000);
+
+  test("should return error for tab.list (no extension)", async () => {
+    const response = await client.send("tab.list", {});
+    // Bridge forwards tab.list to extension; no extension → error
+    expect(response.error).toBeDefined();
+    expect(response.jsonrpc).toBe("2.0");
+  }, 10000);
+
+  test("should reject invalid method", async () => {
+    const response = await client.send("invalid.fake.method", {});
+    expect(response.error).toBeDefined();
+    const error = response.error as Record<string, unknown>;
+    expect(error.code).toBe(-32601);
   }, 10000);
 });
