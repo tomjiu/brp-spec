@@ -253,7 +253,44 @@ async fn run_bridge() {
     let (request_tx, mut request_rx) = mpsc::channel::<Request>(32);
 
     // ── WebSocket Server ──
-    {
+    let use_random_port = config.ws_addr.ends_with(":0");
+
+    if use_random_port {
+        let listener = match tokio::net::TcpListener::bind(&config.ws_addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                log::error!("[Bridge] Failed to bind {}: {}", config.ws_addr, e);
+                return;
+            }
+        };
+        let addr = listener
+            .local_addr()
+            .expect("bound socket should have addr");
+        let actual_port = addr.port();
+        log::info!(
+            "[Bridge] WS server on 127.0.0.1:{} (random port)",
+            actual_port
+        );
+
+        // Write {port, token} to stdout so the MCP adapter / user knows the actual port
+        let port_msg = json!({
+            "port": actual_port,
+            "token": config.auth_token
+        });
+        if let Err(e) = crate::transport::send_native_message(&port_msg).await {
+            log::error!("[Bridge] Failed to write port info: {}", e);
+        } else {
+            log::info!("[Bridge] Port {} written to stdout", actual_port);
+        }
+
+        let state = state.clone();
+        let notify_tx = notify_tx.clone();
+        let auth_token = auth_token.clone();
+        tokio::spawn(async move {
+            ws_server::run_ws_server_from_listener(listener, auth_token, state, notify_tx, None)
+                .await;
+        });
+    } else {
         let state = state.clone();
         let notify_tx = notify_tx.clone();
         let ws_addr = config.ws_addr.clone();
