@@ -49,6 +49,13 @@ pub fn parse_mode() -> BridgeMode {
                 eprintln!("Valid modes: bridge, bootstrap");
                 std::process::exit(1);
             }
+            // Firefox Native Messaging passes manifest path as positional arg on Windows.
+            // The extension origin may also appear as a positional arg on Linux/macOS.
+            // Silently skip unknown non-flag arguments.
+            s if !s.starts_with("-") => {
+                // positional argument — silently ignored
+                log::debug!("[Mode] Ignoring positional argument: {}", s);
+            }
             s => {
                 eprintln!("Unknown argument: {}", s);
                 eprintln!("Use --help for usage.");
