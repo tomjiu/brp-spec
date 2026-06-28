@@ -25,6 +25,15 @@ User's Real Browser Session (cookies, logins, tabs)
 
 The Bridge handles protocol lifecycle (initialize/shutdown/exit) locally and forwards all other requests (navigation, element interaction, screenshots) to the Firefox Extension via WebSocket.
 
+## Usage Modes
+
+BRP supports two modes:
+
+- **Browser Bootstrap (B1)**: extension auto-starts bridge, no manual config
+- **Standalone Bridge**: MCP client starts bridge, manual token config
+
+See [docs/USAGE-MODES.md](docs/USAGE-MODES.md) for details.
+
 ## Project Structure
 
 ```
