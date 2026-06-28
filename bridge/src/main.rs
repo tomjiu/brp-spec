@@ -21,6 +21,7 @@
 /// Security detail: see SECURITY.md and docs/SECURITY-ARCHITECTURE-DECISIONS.md
 mod auth;
 mod config;
+mod mode;
 mod native_msg;
 mod protocol;
 mod ratelimit;
@@ -29,20 +30,105 @@ mod transport;
 mod ws_server;
 
 use config::BridgeConfig;
+use mode::BridgeMode;
 use protocol::{Request, SessionState};
 use router::BridgeState;
 use serde_json::json;
+use std::io::Read;
+use std::io::Write;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 
 #[tokio::main]
 async fn main() {
+    let mode = mode::parse_mode();
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis()
         .init();
 
     log::info!("═══ BRP Bridge v{} ═══", env!("CARGO_PKG_VERSION"));
+    log::info!("[Mode] {:?}", mode);
 
+    match mode {
+        BridgeMode::Echo => run_echo().await,
+        BridgeMode::Bootstrap => run_bootstrap().await,
+        BridgeMode::Bridge => run_bridge().await,
+    }
+}
+
+// ─── Echo Mode (diagnostic) ───
+
+async fn run_echo() {
+    log::info!("[Echo] Diagnostic mode — echoing stdin to stdout in NM format");
+    tokio::task::spawn_blocking(|| {
+        loop {
+            match crate::transport::read_native_message() {
+                Ok(Some(value)) => {
+                    log::debug!("[Echo] ← {}", value);
+                    // Re-encode with NM format (4-byte LE length + JSON)
+                    let json_str = value.to_string();
+                    let len_bytes = (json_str.len() as u32).to_le_bytes();
+                    let mut stdout = std::io::stdout();
+                    if let Err(e) = stdout
+                        .write_all(&len_bytes)
+                        .and_then(|_| stdout.write_all(json_str.as_bytes()))
+                        .and_then(|_| stdout.flush())
+                    {
+                        log::error!("[Echo] Write error: {}", e);
+                        break;
+                    }
+                }
+                Ok(None) => {
+                    log::info!("[Echo] EOF — exiting");
+                    break;
+                }
+                Err(e) => {
+                    log::error!("[Echo] Read error: {}", e);
+                    break;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+}
+
+// ─── Bootstrap Mode (Firefox connectNative token delivery) ───
+
+async fn run_bootstrap() {
+    let config = BridgeConfig::load();
+    let token_msg = json!({
+        "port": 0,  // TODO(PR #21): fill real WS port from lockfile
+        "token": config.auth_token
+    });
+
+    log::info!("[Bootstrap] Sending token message: {}", token_msg);
+
+    if let Err(e) = crate::transport::send_native_message(&token_msg).await {
+        log::error!("[Bootstrap] Failed to send token: {}", e);
+        return;
+    }
+
+    log::info!("[Bootstrap] Token delivered, hanging as keepalive...");
+
+    // Wait for either Ctrl+C OR stdin EOF (Firefox disconnects connectNative port)
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            log::info!("[Bootstrap] Ctrl+C received");
+        }
+        _ = tokio::task::spawn_blocking(|| {
+            let _ = std::io::stdin().read(&mut [0u8]);
+        }) => {
+            log::info!("[Bootstrap] stdin EOF — Firefox disconnected, exiting");
+        }
+    }
+    log::info!("[Bootstrap] Exiting");
+}
+
+// ─── Bridge Mode (full WebSocket + Native Messaging I/O) ───
+
+async fn run_bridge() {
     // ── Configuration ──
     let config = BridgeConfig::load();
     log::info!("[Auth] Token authentication ENABLED (mandatory)");
