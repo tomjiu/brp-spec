@@ -12,6 +12,7 @@ import type {
   Modifiers,
 } from "./types.content";
 import { validatePrecondition } from "./precondition";
+import { findElementWithFallback } from "./selector-fallback";
 import type { ITreeAPI } from "./types.content";
 import {
   isHTMLElement,
@@ -92,7 +93,9 @@ function invalidParams(msg: string): ContentError {
 // ─── Action Implementations ───
 
 function doClick(msg: ContentMessage): ContentResult {
-  const el = itree.findElement(msg.selector, msg.selectors, msg.nodeId);
+  const { element: el, matchedType } = findElementWithFallback(
+    msg.selector, msg.selectors, msg.nodeId, itree, msg.acceptFallback ?? false,
+  );
   if (!el || !isHTMLElement(el)) return elementNotFound();
 
   const preErr = validatePrecondition(el, msg.precondition);
@@ -130,11 +133,13 @@ function doClick(msg: ContentMessage): ContentResult {
       });
   }, 300);
 
-  return { success: true, matchedSelector: { type: "nodeId" } };
+  return { success: true, ...(matchedType ? { matchedSelector: { type: matchedType } } : {}) };
 }
 
 function doType(msg: ContentMessage): ContentResult {
-  const el = itree.findElement(msg.selector, msg.selectors, msg.nodeId);
+  const { element: el, matchedType } = findElementWithFallback(
+    msg.selector, msg.selectors, msg.nodeId, itree, msg.acceptFallback ?? false,
+  );
   if (!el || !isHTMLElement(el)) return elementNotFound();
 
   const preErr = validatePrecondition(el, msg.precondition);
@@ -164,11 +169,13 @@ function doType(msg: ContentMessage): ContentResult {
 
   el.dispatchEvent(new Event("change", { bubbles: true }));
 
-  return { success: true, typed: text.length };
+  return { success: true, typed: text.length, ...(matchedType ? { matchedSelector: { type: matchedType } } : {}) };
 }
 
 function doFill(msg: ContentMessage): ContentResult {
-  const el = itree.findElement(msg.selector, msg.selectors, msg.nodeId);
+  const { element: el, matchedType } = findElementWithFallback(
+    msg.selector, msg.selectors, msg.nodeId, itree, msg.acceptFallback ?? false,
+  );
   if (!el || !isHTMLElement(el)) return elementNotFound();
 
   const preErr = validatePrecondition(el, msg.precondition);
@@ -188,7 +195,7 @@ function doFill(msg: ContentMessage): ContentResult {
   el.dispatchEvent(new Event("input", { bubbles: true }));
   el.dispatchEvent(new Event("change", { bubbles: true }));
 
-  return { success: true, filled: text.length };
+  return { success: true, filled: text.length, ...(matchedType ? { matchedSelector: { type: matchedType } } : {}) };
 }
 
 function doExecuteScript(msg: ContentMessage): ContentResult {
@@ -225,7 +232,9 @@ function doExecuteScript(msg: ContentMessage): ContentResult {
 
 function doScroll(msg: ContentMessage): ContentResult {
   if (msg.selector || msg.nodeId) {
-    const el = itree.findElement(msg.selector, msg.selectors, msg.nodeId);
+    const { element: el, matchedType } = findElementWithFallback(
+    msg.selector, msg.selectors, msg.nodeId, itree, msg.acceptFallback ?? false,
+  );
     if (!el || !isHTMLElement(el)) return elementNotFound();
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     return { success: true };
@@ -235,7 +244,9 @@ function doScroll(msg: ContentMessage): ContentResult {
 }
 
 function doHover(msg: ContentMessage): ContentResult {
-  const el = itree.findElement(msg.selector, msg.selectors, msg.nodeId);
+  const { element: el, matchedType } = findElementWithFallback(
+    msg.selector, msg.selectors, msg.nodeId, itree, msg.acceptFallback ?? false,
+  );
   if (!el || !isHTMLElement(el)) return elementNotFound();
 
   const preErr = validatePrecondition(el, msg.precondition);
@@ -251,11 +262,13 @@ function doHover(msg: ContentMessage): ContentResult {
   el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, clientX: x, clientY: y }));
   el.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: x, clientY: y }));
 
-  return { success: true };
+  return { success: true, ...(matchedType ? { matchedSelector: { type: matchedType } } : {}) };
 }
 
 function doSelect(msg: ContentMessage): ContentResult {
-  const el = itree.findElement(msg.selector, msg.selectors, msg.nodeId);
+  const { element: el, matchedType } = findElementWithFallback(
+    msg.selector, msg.selectors, msg.nodeId, itree, msg.acceptFallback ?? false,
+  );
   if (!el || !isHTMLSelectElement(el)) {
     if (!el) return elementNotFound();
     return { error: "Element is not a <select>", errorCode: "BRP_INVALID_TARGET" };
@@ -288,11 +301,13 @@ function doSelect(msg: ContentMessage): ContentResult {
   }
 
   el.dispatchEvent(new Event("change", { bubbles: true }));
-  return { success: true, selected: matched };
+  return { success: true, selected: matched, ...(matchedType ? { matchedSelector: { type: matchedType } } : {}) };
 }
 
 function doGetAttribute(msg: ContentMessage): ContentResult {
-  const el = itree.findElement(msg.selector, msg.selectors, msg.nodeId);
+  const { element: el, matchedType } = findElementWithFallback(
+    msg.selector, msg.selectors, msg.nodeId, itree, msg.acceptFallback ?? false,
+  );
   if (!el || !isHTMLElement(el)) return elementNotFound();
 
   const attrName = msg.attribute;
