@@ -54,7 +54,10 @@ pub fn parse_mode() -> BridgeMode {
             // us via connectNative, force Bootstrap mode — Bridge mode only runs when
             // explicitly invoked without positional args (e.g. by MCP client).
             s if !s.starts_with("-") => {
-                log::debug!("[Mode] Firefox positional arg — entering bootstrap mode: {}", s);
+                log::debug!(
+                    "[Mode] Firefox positional arg — entering bootstrap mode: {}",
+                    s
+                );
                 if mode != BridgeMode::Echo {
                     mode = BridgeMode::Bootstrap;
                 }
