@@ -31,6 +31,7 @@ fn socket_path() -> PathBuf {
 
 /// Represents an acquired Unix socket lock.
 /// Drops the listener and removes the socket file when released.
+#[derive(Debug)]
 pub struct SocketLock {
     path: PathBuf,
     listener: Option<UnixListener>,
