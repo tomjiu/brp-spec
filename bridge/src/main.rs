@@ -34,6 +34,7 @@ use mode::BridgeMode;
 use protocol::{Request, SessionState};
 use router::BridgeState;
 use serde_json::json;
+use std::io::Read;
 use std::io::Write;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -69,9 +70,14 @@ async fn run_echo() {
                     let json_str = value.to_string();
                     let len_bytes = (json_str.len() as u32).to_le_bytes();
                     let mut stdout = std::io::stdout();
-                    stdout.write_all(&len_bytes).unwrap();
-                    stdout.write_all(json_str.as_bytes()).unwrap();
-                    stdout.flush().unwrap();
+                    if let Err(e) = stdout
+                        .write_all(&len_bytes)
+                        .and_then(|_| stdout.write_all(json_str.as_bytes()))
+                        .and_then(|_| stdout.flush())
+                    {
+                        log::error!("[Echo] Write error: {}", e);
+                        break;
+                    }
                 }
                 Ok(None) => {
                     log::info!("[Echo] EOF — exiting");
@@ -106,10 +112,16 @@ async fn run_bootstrap() {
 
     log::info!("[Bootstrap] Token delivered, hanging as keepalive...");
 
-    // Hang until Ctrl+C or stdin EOF (Firefox disconnect)
-    match tokio::signal::ctrl_c().await {
-        Ok(_) => log::info!("[Bootstrap] Ctrl+C received"),
-        Err(e) => log::error!("[Bootstrap] Signal error: {}", e),
+    // Wait for either Ctrl+C OR stdin EOF (Firefox disconnects connectNative port)
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            log::info!("[Bootstrap] Ctrl+C received");
+        }
+        _ = tokio::task::spawn_blocking(|| {
+            let _ = std::io::stdin().read(&mut [0u8]);
+        }) => {
+            log::info!("[Bootstrap] stdin EOF — Firefox disconnected, exiting");
+        }
     }
     log::info!("[Bootstrap] Exiting");
 }
