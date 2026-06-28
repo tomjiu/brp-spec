@@ -84,8 +84,8 @@ export async function startBridge(): Promise<WebSocket> {
     );
   }
 
-  // 3. Close connectNative port — token received, WebSocket next
-  // port.disconnect();  // TEMP: keep port open to prevent bridge stdin EOF (B1 race condition fix)
+  // 3. Close connectNative port — bridge will survive until WS connects (方案A)
+  port.disconnect();
 
   // 4. Connect WebSocket
   const wsUrl = `ws://127.0.0.1:${rawMsg.port}`;

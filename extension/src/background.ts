@@ -106,7 +106,7 @@ async function connect(): Promise<void> {
 }
 
 function setupConnection(socket: WebSocket): void {
-  socket.onopen = async (): Promise<void> => {
+  const registerExtension = async (): Promise<void> => {
     console.log("[BRP] Connected to bridge");
     reconnectAttempts = 0;
     authenticated = false;
@@ -138,6 +138,10 @@ function setupConnection(socket: WebSocket): void {
     });
     socket.send(registerMsg);
     console.log("[BRP] Registering as:", browserName, token ? "(with token)" : "(no token — Origin-only auth)");
+  };
+
+  socket.onopen = (): void => {
+    void registerExtension();
   };
 
   socket.onmessage = (event: MessageEvent<string>): void => {
@@ -182,6 +186,12 @@ function setupConnection(socket: WebSocket): void {
   socket.onerror = (): void => {
     console.error("[BRP] WebSocket error");
   };
+
+  // B1 auto-link: socket may already be open when setupConnection is called.
+  // onopen won't fire for already-open sockets, so trigger registration manually.
+  if (socket.readyState === WebSocket.OPEN) {
+    void registerExtension();
+  }
 }
 
 function scheduleReconnect(authFailed = false): void {

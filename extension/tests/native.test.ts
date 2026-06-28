@@ -77,8 +77,7 @@ describe("startBridge", () => {
     const ws = await wsPromise;
     expect(ws).toBeInstanceOf(MockWebSocket);
     expect((ws as MockWebSocket).url).toBe("ws://127.0.0.1:19817");
-    // TEMP: port stays open to prevent bridge stdin EOF (B1 race condition fix)
-    expect(portMock.disconnect).not.toHaveBeenCalled();
+    expect(portMock.disconnect).toHaveBeenCalled();
     expect(browser.runtime.connectNative).toHaveBeenCalledWith("org.brp.bridge");
   });
 

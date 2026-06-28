@@ -44,22 +44,26 @@ pub async fn run_ws_server(
     };
 
     log::info!("[WsServer] Listening on {} for Firefox Extension...", addr);
-    run_accept_loop(listener, auth_token, state, notify_tx).await;
+    run_accept_loop(listener, auth_token, state, notify_tx, None).await;
 }
 
 /// Start the WebSocket server from a pre-bound TcpListener.
 /// Used by bootstrap mode which needs the OS-assigned port before starting.
+///
+/// `ws_connected_tx` — fires once when the first WebSocket connection is accepted.
+/// Bootstrap uses this to know the extension has connected before releasing hold.
 pub async fn run_ws_server_from_listener(
     listener: TcpListener,
     auth_token: Arc<String>,
     state: Arc<RwLock<BridgeState>>,
     notify_tx: mpsc::Sender<Value>,
+    ws_connected_tx: Option<tokio::sync::oneshot::Sender<()>>,
 ) {
     let addr = listener
         .local_addr()
         .expect("bound listener should have addr");
     log::info!("[WsServer] Listening on {} for Firefox Extension...", addr);
-    run_accept_loop(listener, auth_token, state, notify_tx).await;
+    run_accept_loop(listener, auth_token, state, notify_tx, ws_connected_tx).await;
 }
 
 async fn run_accept_loop(
@@ -67,6 +71,7 @@ async fn run_accept_loop(
     auth_token: Arc<String>,
     state: Arc<RwLock<BridgeState>>,
     notify_tx: mpsc::Sender<Value>,
+    mut ws_connected_tx: Option<tokio::sync::oneshot::Sender<()>>,
 ) {
     log::info!("[WsServer] Token authentication ENABLED (mandatory)");
 
@@ -75,6 +80,12 @@ async fn run_accept_loop(
     loop {
         match listener.accept().await {
             Ok((stream, peer)) => {
+                // ── Notify bootstrap: first WS connection established ──
+                if let Some(tx) = ws_connected_tx.take() {
+                    let _ = tx.send(());
+                    log::info!("[WsServer] First connection — bootstrap notified");
+                }
+
                 // ── Rate limiting (pre-upgrade) ──
                 {
                     let mut rl = rate_limiter.lock().await;

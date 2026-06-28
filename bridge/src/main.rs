@@ -42,7 +42,8 @@ use serde_json::json;
 use std::io::Read;
 use std::io::Write;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use std::time::Duration;
+use tokio::sync::{mpsc, oneshot, RwLock};
 
 #[tokio::main]
 async fn main() {
@@ -138,6 +139,10 @@ async fn run_bootstrap() {
     let auth_token = Arc::new(config.auth_token.clone());
     let (notify_tx, _notify_rx) = mpsc::channel::<serde_json::Value>(64);
 
+    // Create oneshot channel before spawning WS server
+    // ws_server signals when first extension connects via WebSocket
+    let (ws_connected_tx, ws_connected_rx) = oneshot::channel();
+
     let ws_addr = {
         let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
             Ok(l) => l,
@@ -157,9 +162,16 @@ async fn run_bootstrap() {
             let state = state.clone();
             let notify_tx = notify_tx.clone();
             let auth_token = auth_token.clone();
+            let ws_connected_tx = Some(ws_connected_tx);
             tokio::spawn(async move {
-                ws_server::run_ws_server_from_listener(listener, auth_token, state, notify_tx)
-                    .await;
+                ws_server::run_ws_server_from_listener(
+                    listener,
+                    auth_token,
+                    state,
+                    notify_tx,
+                    ws_connected_tx,
+                )
+                .await;
             });
         }
 
@@ -190,9 +202,27 @@ async fn run_bootstrap() {
         return;
     }
 
-    log::info!("[Bootstrap] Token delivered, hanging as keepalive...");
+    log::info!("[Bootstrap] Token delivered, waiting for extension WS connection...");
 
-    // ── 5. Wait for Ctrl+C or stdin EOF ──
+    // ── 5. Wait for WS connection (30s timeout) or Ctrl+C ──
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            log::info!("[Bootstrap] Ctrl+C received (before WS connect)");
+            lockfile::release();
+            return;
+        }
+        _ = ws_connected_rx => {
+            log::info!("[Bootstrap] Extension connected via WebSocket");
+        }
+        _ = tokio::time::sleep(Duration::from_secs(30)) => {
+            log::warn!("[Bootstrap] WS connection timeout (30s), exiting");
+            lockfile::release();
+            return;
+        }
+    }
+
+    // ── 6. WS connected — wait for stdin EOF or Ctrl+C ──
+    log::info!("[Bootstrap] WS connected, hanging as keepalive...");
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             log::info!("[Bootstrap] Ctrl+C received");
