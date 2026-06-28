@@ -7,7 +7,7 @@ import {
   validateTabId,
   validateUrl,
 } from "./handlers";
-import { startBridge } from "./native";
+import { releaseBridge, startBridge } from "./native";
 import type { BridgeMessage, JsonObject, JsonRpcRequest, JsonValue, MessageId } from "./types";
 import { errorMessage, getBoolean, getNumber, getObject, getString, isJsonObject } from "./types";
 
@@ -179,6 +179,7 @@ function setupConnection(socket: WebSocket): void {
   socket.onclose = (event: CloseEvent): void => {
     const authFailed = event.code === 4001;
     console.warn("[BRP] Disconnected (code=%d%s)", event.code, authFailed ? ", auth failed" : "");
+    releaseBridge(); // kill bridge, release single-instance lock
     ws = null;
     scheduleReconnect(authFailed);
   };

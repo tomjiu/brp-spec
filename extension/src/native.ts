@@ -7,6 +7,12 @@
  * Prototype-validated behaviors:
  * - 5a: Extension unload kills bridge (stdin EOF → bridge exits, PR #18)
  * - 5d: Broken native manifest → no token message → 3-second timeout (PR #17)
+ *
+ * Lifecycle note (Windows):
+ * port.disconnect() kills the bridge process (stdin pipe close → OS signal).
+ * The native port must stay open while the WebSocket is connected.
+ * When the WebSocket closes, disconnect the port so the bridge exits,
+ * releasing the single-instance lock for the next reconnection.
  */
 
 const NATIVE_APP_NAME = "org.brp.bridge";
@@ -37,18 +43,30 @@ function waitForMessage(port: browser.runtime.Port): Promise<unknown> {
   });
 }
 
+/** Current active native port. Disconnected before each connectNative call
+ *  to ensure the old bridge releases its single-instance lock. */
+let activePort: browser.runtime.Port | null = null;
+
 /**
  * B1 Auto-Link: launch bridge via connectNative, read token+port, connect WebSocket.
  *
  * Flow:
- *  1. connectNative → Firefox spawns bridge
- *  2. Read first message {port, token} with 3-second timeout
- *  3. Connect ws://127.0.0.1:<port>
+ *  1. Disconnect any existing port → kills old bridge, releases lock
+ *  2. connectNative → Firefox spawns new bridge
+ *  3. Read first message {port, token} with 3-second timeout
+ *  4. Connect ws://127.0.0.1:<port>
+ *  5. Keep port open (keeps bridge alive). Disconnect when WS closes.
  *
  * Falls back with a user-friendly error if connectNative is unavailable
  * or the 3-second token timeout fires (native manifest not installed).
  */
 export async function startBridge(): Promise<WebSocket> {
+  // 0. Kill previous bridge if any (releases single-instance lock)
+  if (activePort) {
+    try { activePort.disconnect(); } catch (_) { /* ignore */ }
+    activePort = null;
+  }
+
   // 1. connectNative
   let port: browser.runtime.Port;
   try {
@@ -66,12 +84,14 @@ export async function startBridge(): Promise<WebSocket> {
     waitForMessage(port),
     new Promise<never>((_, reject) =>
       setTimeout(
-        () =>
+        () => {
+          port.disconnect();
           reject(
             new Error(
               "Bridge not installed. Run install.sh (Linux/macOS) or install.ps1 (Windows) first."
             )
-          ),
+          );
+        },
         TOKEN_TIMEOUT_MS
       )
     ),
@@ -84,8 +104,8 @@ export async function startBridge(): Promise<WebSocket> {
     );
   }
 
-  // 3. Close connectNative port — bridge will survive until WS connects (方案A)
-  port.disconnect();
+  // 3. Keep port open — bridge process stays alive for WebSocket session
+  activePort = port;
 
   // 4. Connect WebSocket
   const wsUrl = `ws://127.0.0.1:${rawMsg.port}`;
@@ -96,8 +116,9 @@ export async function startBridge(): Promise<WebSocket> {
 
     const timeout = setTimeout(() => {
       ws.close();
+      disconnectAndClearPort();
       reject(new Error(`Bridge WebSocket connect timeout (${wsUrl})`));
-    }, 10000); // 10 seconds for WS connect
+    }, 10000);
 
     ws.onopen = () => {
       clearTimeout(timeout);
@@ -107,7 +128,21 @@ export async function startBridge(): Promise<WebSocket> {
 
     ws.onerror = () => {
       clearTimeout(timeout);
+      disconnectAndClearPort();
       reject(new Error(`Bridge WebSocket connect failed (${wsUrl})`));
     };
   });
+}
+
+function disconnectAndClearPort(): void {
+  if (activePort) {
+    try { activePort.disconnect(); } catch (_) { /* ignore */ }
+    activePort = null;
+  }
+}
+
+/** Disconnect native port — kills bridge, releases single-instance lock.
+ *  Call this from background.ts when WebSocket closes. */
+export function releaseBridge(): void {
+  disconnectAndClearPort();
 }

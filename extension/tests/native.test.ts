@@ -40,12 +40,19 @@ class MockWebSocket {
   url: string;
   onopen: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  onclose: ((event: CloseEvent) => void) | null = null;
   close = vi.fn();
+  private listeners: Record<string, Array<() => void>> = {};
 
   constructor(url: string) {
     this.url = url;
     // Auto-open on next tick to simulate connection
     setTimeout(() => this.onopen?.(), 0);
+  }
+
+  addEventListener(event: string, handler: () => void): void {
+    if (!this.listeners[event]) this.listeners[event] = [];
+    this.listeners[event].push(handler);
   }
 }
 
@@ -77,7 +84,8 @@ describe("startBridge", () => {
     const ws = await wsPromise;
     expect(ws).toBeInstanceOf(MockWebSocket);
     expect((ws as MockWebSocket).url).toBe("ws://127.0.0.1:19817");
-    expect(portMock.disconnect).toHaveBeenCalled();
+    // Port stays open — bridge must remain alive for WS session
+    expect(portMock.disconnect).not.toHaveBeenCalled();
     expect(browser.runtime.connectNative).toHaveBeenCalledWith("org.brp.bridge");
   });
 
@@ -88,6 +96,8 @@ describe("startBridge", () => {
     vi.advanceTimersByTime(3100);
 
     await expect(wsPromise).rejects.toThrow(/Bridge not installed/);
+    // Timeout path disconnects port to clean up
+    expect(portMock.disconnect).toHaveBeenCalled();
   });
 
   it("should throw when connectNative is unavailable", async () => {
