@@ -116,7 +116,7 @@ function connect(): void {
         browserId: browserName,
         token: token || "",
         userAgent: navigator.userAgent,
-        extensionVersion: "0.3.3",
+        extensionVersion: "0.3.4",
       },
     });
     ws?.send(registerMsg);
