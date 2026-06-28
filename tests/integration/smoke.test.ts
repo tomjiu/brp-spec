@@ -1,11 +1,5 @@
 /**
  * Phase 1 Smoke Test — Bridge Startup + WS + Initialize
- *
- * Starts bridge in standalone mode, connects MCP client via WebSocket,
- * verifies bridge process, WS connection, and JSON-RPC initialize handshake.
- *
- * Note: Extension integration (headless Firefox + extension loading) deferred
- * to spike — headless Firefox native messaging compatibility TBD.
  */
 
 import { test, expect } from "@playwright/test";
@@ -16,9 +10,7 @@ let bridge: BridgeInfo;
 let client: McpClient;
 
 test.beforeAll(async () => {
-  bridge = startBridge();
-  // Give bridge time to bind port and start WS server
-  await new Promise(r => setTimeout(r, 2000));
+  bridge = await startBridge();
   client = new McpClient(bridge.port);
 });
 
