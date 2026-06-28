@@ -164,8 +164,12 @@ jobs:
     steps:
       - name: Check job results
         run: |
-          if [[ "${{ needs.rust.result }}" != "success" || "${{ needs.extension.result }}" != "success" || "${{ needs.integration.result }}" != "success" ]]; then
+          if [[ "${{ needs.rust.result }}" != "success" || "${{ needs.extension.result }}" != "success" ]]; then
             echo "One or more jobs failed."
+            exit 1
+          fi
+          if [[ "${{ needs.integration.result }}" != "success" && "${{ needs.integration.result }}" != "skipped" ]]; then
+            echo "Integration job failed."
             exit 1
           fi
           echo "All CI jobs passed."
