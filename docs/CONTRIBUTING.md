@@ -19,13 +19,15 @@ When proposing changes, contributors should prioritize protocol simplicity and i
 
 ## Repository Structure
 
+> ⚠️ This repository is the **reference implementation** of BRP — a production Firefox extension + Rust bridge. For protocol specification contributions, use the `docs/rfcs/` directory.
+
 ```text
-rfcs/           Protocol specifications
-docs/           Design documents
-schemas/        JSON Schemas
-examples/       Example protocol exchanges
-adapters/       Browser-specific mappings (future)
-sdk/            Client SDKs (future)
+bridge/         Rust Bridge (WebSocket server, NM I/O, JSON-RPC) — see bridge/src/
+extension/      Firefox Extension (TypeScript, Manifest V2) — see extension/src/
+adapter/        MCP adapter (Python/FastMCP)
+docs/rfcs/      Protocol specifications (RFC0000, RFC0001, RFC0002)
+tests/          E2E integration tests
+spikes/         Risk-reduction prototypes (B1 IPC, etc.)
 ```
 
 ## RFC Process
