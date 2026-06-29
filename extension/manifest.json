@@ -9,7 +9,8 @@
     "webNavigation",
     "storage",
     "nativeMessaging",
-    "<all_urls>"
+    "<all_urls>",
+    "tabGroups"
   ],
   "optional_permissions": ["history"],
   "background": {
