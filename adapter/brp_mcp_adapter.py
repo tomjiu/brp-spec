@@ -21,7 +21,12 @@ import argparse
 import logging
 from typing import Optional
 
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP
+    _mcp_available = True
+except ImportError:
+    FastMCP = None  # type: ignore
+    _mcp_available = False
 
 # ── Logging (stderr only — stdout is MCP protocol) ──
 logging.basicConfig(
@@ -205,7 +210,14 @@ async def ensure_initialized():
 
 # ── MCP Server ──
 
-mcp_server = FastMCP("BRP Browser Bridge")
+if _mcp_available:
+    mcp_server = FastMCP("BRP Browser Bridge")
+else:
+    # Dummy for token CLI mode — decorators are no-ops
+    class _DummyMCP:
+        def tool(self):
+            return lambda f: f
+    mcp_server = _DummyMCP()
 
 # Global config (set in main)
 _bridge_path = ""
@@ -658,6 +670,10 @@ def main():
     log.info("BRP MCP Adapter starting")
     log.info("  Bridge: %s", _bridge_path)
     log.info("  WS addr: %s", _ws_addr)
+
+    if not _mcp_available:
+        log.error("mcp SDK not installed. Install with: pip install mcp")
+        sys.exit(1)
 
     mcp_server.run(transport="stdio")
 
