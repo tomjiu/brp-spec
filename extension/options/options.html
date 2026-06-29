@@ -130,6 +130,49 @@
     <div id="blacklist-status" class="status"></div>
   </div>
 
+  <div class="section">
+    <h2 style="font-size:16px;margin-bottom:12px">📸 Screenshot Blur</h2>
+    <p class="hint">
+      When AI takes a screenshot, sensitive form fields can be automatically blurred.
+      <strong>Default: off</strong>. Enable to protect passwords, credit cards, etc.
+    </p>
+
+    <label for="blur-gate">Blur Mode</label>
+    <select id="blur-gate">
+      <option value="never">Off (no blur)</option>
+      <option value="always">Always blur (no prompt)</option>
+      <option value="ask">Ask each time</option>
+    </select>
+
+    <label>Sensitive Field Types</label>
+    <div style="margin-bottom:12px">
+      <label style="font-weight:normal;display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <input type="checkbox" id="blur-password" checked> Password fields
+      </label>
+      <label style="font-weight:normal;display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <input type="checkbox" id="blur-credit" checked> Credit card fields
+      </label>
+      <label style="font-weight:normal;display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <input type="checkbox" id="blur-cvv" checked> CVV / CVC fields
+      </label>
+      <label style="font-weight:normal;display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <input type="checkbox" id="blur-email"> Email fields
+      </label>
+      <label style="font-weight:normal;display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <input type="checkbox" id="blur-ssn"> SSN fields
+      </label>
+    </div>
+
+    <label for="blur-custom">Custom CSS Selectors (one per line, advanced)</label>
+    <textarea id="blur-custom" rows="3" placeholder=".sensitive-field&#10;#api-key-input"></textarea>
+
+    <div class="btn-row" style="margin-top:8px">
+      <button id="blur-save-btn" class="primary">Save</button>
+      <button id="blur-reset-btn">Reset to Defaults</button>
+    </div>
+    <div id="blur-status" class="status"></div>
+  </div>
+
   <style>
     select { width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; margin-bottom: 14px; box-sizing: border-box; }
     textarea { width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; font-family: monospace; box-sizing: border-box; resize: vertical; margin-bottom: 14px; }

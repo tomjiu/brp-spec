@@ -62,6 +62,10 @@ export const DEFAULT_CONFIG: PermissionGateConfig = {
 
 const STORAGE_KEY = "brpPermissionConfig";
 
+/**
+ * Load permission config from storage, deep-merging with defaults
+ * so newly added keys are always present.
+ */
 export async function loadConfig(): Promise<PermissionGateConfig> {
   try {
     const result = await browser.storage.local.get(STORAGE_KEY);
@@ -80,14 +84,16 @@ export async function loadConfig(): Promise<PermissionGateConfig> {
         },
       };
     }
-  } catch { }
+  } catch { /* storage.local unavailable (e.g. content script context) */ }
   return { ...DEFAULT_CONFIG };
 }
 
+/** Save permission config to storage. */
 export async function saveConfig(config: PermissionGateConfig): Promise<void> {
   await browser.storage.local.set({ [STORAGE_KEY]: config });
 }
 
+/** Get current gate mode for a specific action type. */
 export async function getGateMode(
   gateType: keyof PermissionGateConfig["permissionGates"],
 ): Promise<GateMode> {
