@@ -106,11 +106,3 @@
 
 - [ ] supportsAutoLink capability negotiation + backward compatibility matrix
 - [ ] Multi-browser compatibility test matrix (Firefox / Zen / LibreWolf)
-
-## v0.5.0+ — Defense in Depth [ ]
-
-- [ ] **E1** Permission gating (confirm dialogs for navigation, form submit, script.execute)
-- [ ] **E2** Domain blacklist (user-configurable, wildcard support)
-- [ ] **E5** Screenshot permission gate, log sanitization, CSP hardening
-- [ ] **B2** Multi-token (per-client tokens, independent revocation)
-- [ ] **C4** Python adapter: merge into Bridge or keep separate (decide based on ecosystem)
