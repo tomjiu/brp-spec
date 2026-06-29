@@ -251,3 +251,49 @@ export function formatPermissionPrompt(method: string, params: Record<string, un
       };
   }
 }
+
+// ─── v0.5.2 Tab Permission ───
+
+/** Methods that require tab controllable check before execution. */
+export const TAB_SCOPED_METHODS: ReadonlySet<string> = new Set([
+  "page.navigate", "page.getInteractionTree", "page.screenshot",
+  "page.goBack", "page.goForward", "page.reload", "page.waitForSelector",
+  "element.click", "element.type", "element.fill", "element.scroll",
+  "element.hover", "element.select", "element.getAttribute",
+  "keyboard.press", "script.execute",
+  "tab.close", "tab.select",
+]);
+
+/**
+ * Check if a method is allowed on the given tab.
+ * Returns true if:
+ * - method is not tab-scoped (initialize, tab.list, tab.open, etc.)
+ * - tabId is null/undefined (no tab context — e.g. no active tab)
+ * - tab is in controllableTabs
+ */
+export function checkTabControllable(
+  method: string,
+  tabId: number | null | undefined,
+  controllableTabs: ReadonlySet<number>,
+): boolean {
+  if (!TAB_SCOPED_METHODS.has(method)) return true;
+  if (tabId === null || tabId === undefined) return true;
+  return controllableTabs.has(tabId);
+}
+
+/**
+ * Determine if a tab should be auto-demoted based on error code.
+ * Only demotes on BRP_PERMISSION_DENIED (user E1 denial).
+ * Does NOT demote on E2 blacklist, normal errors, or bridge errors.
+ */
+export function shouldDemoteTab(
+  errorCode: string | undefined,
+  method: string,
+  tabId: number | null | undefined,
+  controllableTabs: ReadonlySet<number>,
+): boolean {
+  if (errorCode !== "BRP_PERMISSION_DENIED") return false;
+  if (!TAB_SCOPED_METHODS.has(method)) return false;
+  if (tabId === null || tabId === undefined) return false;
+  return controllableTabs.has(tabId);
+}

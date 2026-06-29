@@ -10,7 +10,11 @@ import {
 import { releaseBridge, startBridge } from "./native";
 import type { BridgeMessage, JsonObject, JsonRpcRequest, JsonValue, MessageId } from "./types";
 import { errorMessage, getBoolean, getNumber, getObject, getString, isJsonObject } from "./types";
-import { checkAllowlist, checkBlacklist, checkPermission, registerControllableTabs, resolvePermission } from "./permissions/flow";
+import {
+  checkAllowlist, checkBlacklist, checkPermission,
+  checkTabControllable, shouldDemoteTab, TAB_SCOPED_METHODS,
+  registerControllableTabs, resolvePermission,
+} from "./permissions/flow";
 import { loadConfig } from "./permissions/config";
 import { shouldBlur } from "./screenshot-blur";
 import {
@@ -276,6 +280,23 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
     }
   };
 
+  // ── v0.5.2 Tab-level Permission Check ──
+  const tabCheckId = indTabId ?? (await getActiveTabId());
+  if (!checkTabControllable(method, tabCheckId, controllableTabs)) {
+    sendToBridge({ jsonrpc: "2.0", id, error: {
+      code: -32003,
+      message: `Tab ${tabCheckId} is not controllable`,
+      data: {
+        errorCode: "BRP_TAB_NOT_CONTROLLABLE",
+        retriable: false,
+        recoveryHint: "Use tab.setControllable to mark this tab as controllable",
+      },
+    }});
+    notifyIndicatorIdle();
+    onRequestEnd(true);
+    return;
+  }
+
   // ── v0.5.1 Domain Allowlist (skip E2 + E1 for trusted domains) ──
   const allowed = await checkAllowlist(method, params);
   if (!allowed) {
@@ -292,6 +313,20 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
     const permError = await checkPermission(id, method, params);
     if (permError) {
       sendToBridge({ jsonrpc: "2.0", id, error: permError });
+
+      // v0.5.2: Auto-demote tab on user denial
+      const errorCode = (permError.data as Record<string, unknown> | undefined)?.errorCode as string | undefined;
+      const demoteTabId = indTabId ?? (await getActiveTabId());
+      if (shouldDemoteTab(errorCode, method, demoteTabId, controllableTabs)) {
+        controllableTabs.delete(demoteTabId!);
+        updateBadge(controllableTabs.size);
+        browser.tabs.sendMessage(demoteTabId!, {
+          action: "__brp_indicator_update__",
+          status: "hidden",
+        }).catch(() => {});
+        console.log("[BRP] Tab %d demoted to not-controllable (user denied permission)", demoteTabId);
+      }
+
       notifyIndicatorIdle();
       onRequestEnd(true);
       return;
@@ -318,6 +353,9 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
         break;
       case "tab.select":
         result = await handleTabSelect(params);
+        break;
+      case "tab.setControllable":
+        result = await handleTabSetControllable(params);
         break;
       case "page.navigate":
         result = await handlePageNavigate(params);
@@ -405,8 +443,30 @@ async function handleTabList(): Promise<JsonObject> {
       url: t.url,
       active: t.active,
       status: t.status,
+      controllable: typeof t.id === "number" ? controllableTabs.has(t.id) : false,
     })),
   };
+}
+
+async function handleTabSetControllable(params?: JsonObject): Promise<JsonObject> {
+  const tabId = getNumber(params, "tabId");
+  if (tabId === undefined) throw new Error("tabId is required");
+  const ctrl = getBoolean(params, "controllable");
+  if (ctrl === undefined) throw new Error("controllable is required");
+
+  if (ctrl) {
+    controllableTabs.add(tabId);
+  } else {
+    controllableTabs.delete(tabId);
+  }
+  updateBadge(controllableTabs.size);
+
+  browser.tabs.sendMessage(tabId, {
+    action: "__brp_indicator_update__",
+    status: ctrl ? "idle" : "hidden",
+  }).catch(() => {});
+
+  return { tabId, controllable: ctrl };
 }
 
 async function handleTabOpen(params?: JsonObject): Promise<JsonObject> {

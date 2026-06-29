@@ -52,6 +52,7 @@ export type DirectHandlerName =
   | "handleTabOpen"
   | "handleTabClose"
   | "handleTabSelect"
+  | "handleTabSetControllable"
   | "handlePageNavigate"
   | "handleGetITree"
   | "handleScreenshot"
