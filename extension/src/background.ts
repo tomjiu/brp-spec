@@ -37,6 +37,7 @@ registerControllableTabs(controllableTabs);
 // ─── E1 Permission Gating ───
 
 // Listen for dialog responses from content script
+// ── Permission response listener (original, no sendResponse) ──
 browser.runtime.onMessage.addListener((msg: unknown) => {
   if (!isJsonObject(msg)) return;
   const m = msg as Record<string, unknown>;
@@ -46,6 +47,42 @@ browser.runtime.onMessage.addListener((msg: unknown) => {
   const decision = m.decision as string;
   resolvePermission(requestId, decision);
 });
+
+// ── v0.5.2: Controllable tab management listener (uses sendResponse) ──
+browser.runtime.onMessage.addListener(
+  (msg: unknown, _sender: browser.runtime.MessageSender, sendResponse: (resp?: unknown) => void): true | undefined => {
+    if (!isJsonObject(msg)) return;
+    const m = msg as Record<string, unknown>;
+
+    if (m.action === "__brp_toggle_controllable__") {
+      void handleToggleControllable();
+      return;
+    }
+
+    if (m.action === "__brp_get_controllable_tabs__") {
+      sendResponse({ controllable: [...controllableTabs] });
+      return true;
+    }
+
+    if (m.action === "__brp_set_controllable__") {
+      const tabId = m.tabId as number;
+      const ctrl = m.controllable as boolean;
+      if (typeof tabId === "number" && typeof ctrl === "boolean") {
+        if (ctrl) {
+          controllableTabs.add(tabId);
+        } else {
+          controllableTabs.delete(tabId);
+        }
+        updateBadge(controllableTabs.size);
+        browser.tabs.sendMessage(tabId, {
+          action: "__brp_indicator_update__",
+          status: ctrl ? "idle" : "hidden",
+        }).catch(() => {});
+      }
+      return;
+    }
+  },
+);
 
 browser.tabs.onRemoved.addListener((tabId: number): void => {
   controllableTabs.delete(tabId);
@@ -467,6 +504,23 @@ async function handleTabSetControllable(params?: JsonObject): Promise<JsonObject
   }).catch(() => {});
 
   return { tabId, controllable: ctrl };
+}
+
+/** v0.5.2: Toggle controllable state of active tab (from indicator click / popup). */
+async function handleToggleControllable(): Promise<void> {
+  const tabId = await getActiveTabId();
+  if (tabId === null) return;
+  const currentlyControllable = controllableTabs.has(tabId);
+  if (currentlyControllable) {
+    controllableTabs.delete(tabId);
+  } else {
+    controllableTabs.add(tabId);
+  }
+  updateBadge(controllableTabs.size);
+  browser.tabs.sendMessage(tabId, {
+    action: "__brp_indicator_update__",
+    status: currentlyControllable ? "hidden" : "idle",
+  }).catch(() => {});
 }
 
 async function handleTabOpen(params?: JsonObject): Promise<JsonObject> {

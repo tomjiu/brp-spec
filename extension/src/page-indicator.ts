@@ -58,6 +58,10 @@ export function createIndicator(): HTMLElement {
 
   el.addEventListener("mouseenter", onEnter);
   el.addEventListener("mouseleave", onLeave);
+  // v0.5.2: Click to toggle controllable
+  el.addEventListener("click", () => {
+    browser.runtime.sendMessage({ action: "__brp_toggle_controllable__" }).catch(() => {});
+  });
   // store cleanup refs for removeIndicator
   (el as unknown as Record<string, unknown>)["_brpEnter"] = onEnter;
   (el as unknown as Record<string, unknown>)["_brpLeave"] = onLeave;
