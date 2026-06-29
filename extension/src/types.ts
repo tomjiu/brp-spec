@@ -26,6 +26,14 @@ export interface JsonRpcNotification {
 
 export type BridgeMessage = JsonRpcResponse | JsonRpcNotification;
 
+// ─── v0.6.0: Import ts-rs generated types ───
+export type { Precondition as GeneratedPrecondition } from "./generated/Precondition";
+export type { InitializeResult as GeneratedInitializeResult } from "./generated/InitializeResult";
+export type { Capabilities as GeneratedCapabilities } from "./generated/Capabilities";
+export type { ServerInfo as GeneratedServerInfo } from "./generated/ServerInfo";
+export type { ClientInfo as GeneratedClientInfo } from "./generated/ClientInfo";
+export type { SessionState as GeneratedSessionState } from "./generated/SessionState";
+
 export interface SelectorObject extends JsonObject {
   type?: string;
   value?: JsonValue;
