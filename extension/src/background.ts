@@ -10,7 +10,11 @@ import {
 import { releaseBridge, startBridge } from "./native";
 import type { BridgeMessage, JsonObject, JsonRpcRequest, JsonValue, MessageId } from "./types";
 import { errorMessage, getBoolean, getNumber, getObject, getString, isJsonObject } from "./types";
-import { checkAllowlist, checkBlacklist, checkPermission, registerControllableTabs, resolvePermission } from "./permissions/flow";
+import {
+  checkAllowlist, checkBlacklist, checkPermission,
+  checkTabControllable, shouldDemoteTab, TAB_SCOPED_METHODS,
+  registerControllableTabs, resolvePermission,
+} from "./permissions/flow";
 import { loadConfig } from "./permissions/config";
 import { shouldBlur } from "./screenshot-blur";
 import {
@@ -20,16 +24,6 @@ import {
 const WS_URL = "ws://127.0.0.1:9817";
 const RECONNECT_BASE_DELAY = 1000;
 const RECONNECT_MAX_DELAY = 10000;
-
-// ── v0.5.2: Methods that require tab controllable check ──
-const TAB_SCOPED_METHODS: ReadonlySet<string> = new Set([
-  "page.navigate", "page.getInteractionTree", "page.screenshot",
-  "page.goBack", "page.goForward", "page.reload", "page.waitForSelector",
-  "element.click", "element.type", "element.fill", "element.scroll",
-  "element.hover", "element.select", "element.getAttribute",
-  "keyboard.press", "script.execute",
-  "tab.close", "tab.select",
-]);
 
 let ws: WebSocket | null = null;
 let reconnectAttempts = 0;
@@ -287,22 +281,20 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
   };
 
   // ── v0.5.2 Tab-level Permission Check ──
-  if (TAB_SCOPED_METHODS.has(method)) {
-    const tabCheckId = indTabId ?? (await getActiveTabId());
-    if (tabCheckId !== undefined && tabCheckId !== null && !controllableTabs.has(tabCheckId)) {
-      sendToBridge({ jsonrpc: "2.0", id, error: {
-        code: -32003,
-        message: `Tab ${tabCheckId} is not controllable`,
-        data: {
-          errorCode: "BRP_TAB_NOT_CONTROLLABLE",
-          retriable: false,
-          recoveryHint: "Use tab.setControllable to mark this tab as controllable",
-        },
-      }});
-      notifyIndicatorIdle();
-      onRequestEnd(true);
-      return;
-    }
+  const tabCheckId = indTabId ?? (await getActiveTabId());
+  if (!checkTabControllable(method, tabCheckId, controllableTabs)) {
+    sendToBridge({ jsonrpc: "2.0", id, error: {
+      code: -32003,
+      message: `Tab ${tabCheckId} is not controllable`,
+      data: {
+        errorCode: "BRP_TAB_NOT_CONTROLLABLE",
+        retriable: false,
+        recoveryHint: "Use tab.setControllable to mark this tab as controllable",
+      },
+    }});
+    notifyIndicatorIdle();
+    onRequestEnd(true);
+    return;
   }
 
   // ── v0.5.1 Domain Allowlist (skip E2 + E1 for trusted domains) ──
@@ -323,18 +315,16 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
       sendToBridge({ jsonrpc: "2.0", id, error: permError });
 
       // v0.5.2: Auto-demote tab on user denial
-      const errorCode = (permError.data as Record<string, unknown> | undefined)?.errorCode;
-      if (errorCode === "BRP_PERMISSION_DENIED" && TAB_SCOPED_METHODS.has(method)) {
-        const demoteTabId = indTabId ?? (await getActiveTabId());
-        if (demoteTabId !== undefined && demoteTabId !== null && controllableTabs.has(demoteTabId)) {
-          controllableTabs.delete(demoteTabId);
-          updateBadge(controllableTabs.size);
-          browser.tabs.sendMessage(demoteTabId, {
-            action: "__brp_indicator_update__",
-            status: "hidden",
-          }).catch(() => {});
-          console.log("[BRP] Tab %d demoted to not-controllable (user denied permission)", demoteTabId);
-        }
+      const errorCode = (permError.data as Record<string, unknown> | undefined)?.errorCode as string | undefined;
+      const demoteTabId = indTabId ?? (await getActiveTabId());
+      if (shouldDemoteTab(errorCode, method, demoteTabId, controllableTabs)) {
+        controllableTabs.delete(demoteTabId!);
+        updateBadge(controllableTabs.size);
+        browser.tabs.sendMessage(demoteTabId!, {
+          action: "__brp_indicator_update__",
+          status: "hidden",
+        }).catch(() => {});
+        console.log("[BRP] Tab %d demoted to not-controllable (user denied permission)", demoteTabId);
       }
 
       notifyIndicatorIdle();
