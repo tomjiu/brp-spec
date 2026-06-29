@@ -154,51 +154,6 @@ jobs:
           BRP_BRIDGE_PATH: ${{ github.workspace }}/bridge/target/release/brp-bridge
 
   # ---------------------------------------------------------------------------
-  # Spike: xvfb Feasibility (WIP — Phase 2 validation, do not merge)
-  # ---------------------------------------------------------------------------
-  spike-xvfb:
-    name: Spike — xvfb Feasibility
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.head_ref == 'spike/phase2-xvfb-feasibility'
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb firefox
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Build bridge
-        working-directory: bridge
-        run: cargo build --release
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Build extension
-        working-directory: extension
-        run: |
-          npm ci
-          npm run build
-
-      - name: Install spike deps
-        working-directory: tests/integration
-        run: npm ci
-
-      - name: Run xvfb spike
-        working-directory: tests/integration
-        run: npx tsx spike-xvfb.ts
-        env:
-          BRP_EXTENSION_PATH: ${{ github.workspace }}/extension
-          BRP_BRIDGE_PATH: ${{ github.workspace }}/bridge/target/release/brp-bridge
-
-  # ---------------------------------------------------------------------------
   # Summary: Required checks pass if all above succeed
   # ---------------------------------------------------------------------------
   ci-pass:
