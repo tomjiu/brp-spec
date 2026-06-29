@@ -20,11 +20,7 @@
     "rootDir": "."
   },
   "include": [
-    "src/types.ts",
-    "src/globals.d.ts",
-    "src/handlers.ts",
-    "src/background.ts",
-    "src/native.ts",
-    "options/options.ts"
+    "src/**/*.ts",
+    "options/**/*.ts"
   ]
 }
