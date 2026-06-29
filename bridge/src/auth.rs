@@ -41,6 +41,10 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "element.getAttribute",
     "keyboard.press",
     "script.execute",
+    // ── B2 Token Management ──
+    "token.issue",
+    "token.revoke",
+    "token.list",
 ];
 
 // ─── Origin Validation ───

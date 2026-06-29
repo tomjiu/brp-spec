@@ -17,6 +17,10 @@ pub struct BridgeConfig {
     pub standalone: bool,
     /// Whether script.execute is allowed (BRP_ALLOW_SCRIPT_EXECUTE=1)
     pub allow_script_execute: bool,
+    /// B2: Master token (for issuing/revoking client tokens)
+    pub master_token: String,
+    /// B2: Path to multi-token storage file
+    pub tokens_file_path: PathBuf,
 }
 
 impl BridgeConfig {
@@ -50,12 +54,22 @@ impl BridgeConfig {
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
 
+        // ── B2 Multi-token ──
+        let master_token = std::env::var("BRP_MASTER_TOKEN")
+            .ok()
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| format!("mt_{}", uuid::Uuid::new_v4()));
+
+        let tokens_file_path = default_tokens_file_path();
+
         Self {
             ws_addr,
             auth_token,
             token_file_path,
             standalone,
             allow_script_execute,
+            master_token,
+            tokens_file_path,
         }
     }
 }
@@ -107,4 +121,21 @@ fn default_token_path() -> PathBuf {
 
     // Fallback: system temp dir
     std::env::temp_dir().join("brp-bridge-token")
+}
+
+/// B2: Determine the multi-token storage file path.
+fn default_tokens_file_path() -> PathBuf {
+    if let Ok(p) = std::env::var("BRP_TOKENS_FILE") {
+        return PathBuf::from(p);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            return PathBuf::from(appdata).join("brp-bridge").join("tokens.json");
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(home).join(".brp-bridge").join("tokens.json");
+    }
+    std::env::temp_dir().join("brp-bridge-tokens.json")
 }

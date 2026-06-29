@@ -11,11 +11,12 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use crate::auth::{
-    secure_compare, validate_json_depth, OriginValidator, MAX_JSON_DEPTH, MAX_MESSAGE_SIZE,
+    validate_json_depth, OriginValidator, MAX_JSON_DEPTH, MAX_MESSAGE_SIZE,
 };
 use crate::protocol::*;
 use crate::ratelimit::RateLimiter;
 use crate::router::BridgeState;
+use crate::token_manager::TokenManager;
 
 /// Sender half of the extension WebSocket connection (shared across tasks).
 pub type ExtSender = Arc<
@@ -31,7 +32,7 @@ pub type ExtSender = Arc<
 /// Handles rate limiting, origin validation, token auth, and message dispatch.
 pub async fn run_ws_server(
     addr: &str,
-    auth_token: Arc<String>,
+    token_manager: Arc<TokenManager>,
     state: Arc<RwLock<BridgeState>>,
     notify_tx: mpsc::Sender<Value>,
 ) {
@@ -44,7 +45,7 @@ pub async fn run_ws_server(
     };
 
     log::info!("[WsServer] Listening on {} for Firefox Extension...", addr);
-    run_accept_loop(listener, auth_token, state, notify_tx, None).await;
+    run_accept_loop(listener, token_manager, state, notify_tx, None).await;
 }
 
 /// Start the WebSocket server from a pre-bound TcpListener.
@@ -54,7 +55,7 @@ pub async fn run_ws_server(
 /// Bootstrap uses this to know the extension has connected before releasing hold.
 pub async fn run_ws_server_from_listener(
     listener: TcpListener,
-    auth_token: Arc<String>,
+    token_manager: Arc<TokenManager>,
     state: Arc<RwLock<BridgeState>>,
     notify_tx: mpsc::Sender<Value>,
     ws_connected_tx: Option<tokio::sync::oneshot::Sender<()>>,
@@ -63,12 +64,12 @@ pub async fn run_ws_server_from_listener(
         .local_addr()
         .expect("bound listener should have addr");
     log::info!("[WsServer] Listening on {} for Firefox Extension...", addr);
-    run_accept_loop(listener, auth_token, state, notify_tx, ws_connected_tx).await;
+    run_accept_loop(listener, token_manager, state, notify_tx, ws_connected_tx).await;
 }
 
 async fn run_accept_loop(
     listener: TcpListener,
-    auth_token: Arc<String>,
+    token_manager: Arc<TokenManager>,
     state: Arc<RwLock<BridgeState>>,
     notify_tx: mpsc::Sender<Value>,
     mut ws_connected_tx: Option<tokio::sync::oneshot::Sender<()>>,
@@ -103,11 +104,11 @@ async fn run_accept_loop(
                 log::info!("[WsServer] Connection from {}", peer);
                 let state = state.clone();
                 let notify_tx = notify_tx.clone();
-                let auth_token = auth_token.clone();
+                let token_manager = token_manager.clone();
                 let rate_limiter = rate_limiter.clone();
 
                 tokio::spawn(async move {
-                    handle_ws_connection(stream, peer, auth_token, state, notify_tx, rate_limiter)
+                    handle_ws_connection(stream, peer, token_manager, state, notify_tx, rate_limiter)
                         .await;
                 });
             }
@@ -122,7 +123,7 @@ async fn run_accept_loop(
 async fn handle_ws_connection(
     stream: tokio::net::TcpStream,
     peer: std::net::SocketAddr,
-    auth_token: Arc<String>,
+    token_manager: Arc<TokenManager>,
     state: Arc<RwLock<BridgeState>>,
     notify_tx: mpsc::Sender<Value>,
     rate_limiter: Arc<Mutex<RateLimiter>>,
@@ -135,7 +136,7 @@ async fn handle_ws_connection(
 
             // Wait for registration message (10s timeout)
             let browser_id =
-                match register_extension(&mut receiver, &mut tx, &auth_token, &rate_limiter, peer)
+                match register_extension(&mut receiver, &mut tx, &token_manager, &rate_limiter, peer)
                     .await
                 {
                     Some(id) => id,
@@ -200,7 +201,7 @@ async fn register_extension(
         tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
         WsMessage,
     >,
-    auth_token: &str,
+    token_manager: &Arc<TokenManager>,
     rate_limiter: &Arc<Mutex<RateLimiter>>,
     peer: std::net::SocketAddr,
 ) -> Option<String> {
@@ -271,7 +272,7 @@ async fn register_extension(
         .and_then(|t| t.as_str())
         .unwrap_or("");
 
-    if !secure_compare(provided_token, auth_token) {
+    if !token_manager.is_valid_token(provided_token).await {
         log::warn!("[WsServer] AUTH FAILED from {} (token mismatch)", peer);
         let err_msg = json!({
             "jsonrpc": "2.0",
