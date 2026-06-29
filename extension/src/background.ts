@@ -10,6 +10,7 @@ import {
 import { releaseBridge, startBridge } from "./native";
 import type { BridgeMessage, JsonObject, JsonRpcRequest, JsonValue, MessageId } from "./types";
 import { errorMessage, getBoolean, getNumber, getObject, getString, isJsonObject } from "./types";
+import { checkPermission, resolvePermission } from "./permissions/flow";
 
 const WS_URL = "ws://127.0.0.1:9817";
 const RECONNECT_BASE_DELAY = 1000;
@@ -20,6 +21,19 @@ let reconnectAttempts = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let authenticated = false;
 const agentTabIds = new Set<number>();
+
+// ─── E1 Permission Gating ───
+
+// Listen for dialog responses from content script
+browser.runtime.onMessage.addListener((msg: unknown) => {
+  if (!isJsonObject(msg)) return;
+  const m = msg as Record<string, unknown>;
+  if (m.action !== "__brp_permission_response__") return;
+
+  const requestId = m.requestId as string;
+  const decision = m.decision as string;
+  resolvePermission(requestId, decision);
+});
 
 browser.tabs.onRemoved.addListener((tabId: number): void => {
   agentTabIds.delete(tabId);
@@ -227,6 +241,13 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
   const id = msg.id;
   const method = msg.method;
   const params = msg.params;
+
+  // ── E1 Permission Gating ──
+  const permError = await checkPermission(id, method, params);
+  if (permError) {
+    sendToBridge({ jsonrpc: "2.0", id, error: permError });
+    return;
+  }
 
   try {
     let result: JsonValue;

@@ -13,6 +13,7 @@ import type {
 } from "./types.content";
 import { validatePrecondition } from "./precondition";
 import { findElementWithFallback } from "./selector-fallback";
+import { showPermissionDialog, removeExistingDialog } from "./permissions/dialog";
 import type { ITreeAPI } from "./types.content";
 import {
   isHTMLElement,
@@ -416,6 +417,32 @@ function doWaitForSelector(msg: ContentMessage): Promise<ContentResult> {
 
 // ─── Content Script Entry Point ───
 
+/**
+ * Handle permission gate dialog request from background script.
+ */
+async function handlePermissionDialog(msg: Record<string, unknown>): Promise<ContentResult> {
+  const requestId = msg.requestId as string;
+  const title = (msg.title as string) || "Permission required";
+  const description = (msg.description as string) || "";
+  const details = msg.details as string | undefined;
+
+  const decision = await showPermissionDialog({
+    requestId,
+    title,
+    description,
+    ...(details ? { details } : {}),
+  });
+
+  // Send response back to background script
+  browser.runtime.sendMessage({
+    action: "__brp_permission_response__",
+    requestId,
+    decision,
+  }).catch(() => { /* background may have disconnected */ });
+
+  return { success: true, value: decision };
+}
+
 browser.runtime.onMessage.addListener(
   async (msg: unknown): Promise<ContentResult> => {
     if (!isObject(msg) || typeof msg.action !== "string") {
@@ -457,6 +484,13 @@ browser.runtime.onMessage.addListener(
 
         case "executeScript":
           return doExecuteScript(contentMsg);
+
+        case "__brp_permission_dialog__":
+          return await handlePermissionDialog(msg as Record<string, unknown>);
+
+        case "__brp_permission_dialog_close__":
+          removeExistingDialog();
+          return { success: true, value: null };
 
         default:
           return { error: `Unknown action: ${contentMsg.action}` };
