@@ -21,6 +21,20 @@ interface PendingPermission {
 
 const pendingPermissions = new Map<string, PendingPermission>();
 
+/**
+ * Reference to background.ts's agentTabIds Set.
+ * Injected via registerAgentTabIds() at module load time.
+ */
+let agentTabIdsRef: ReadonlySet<number> = new Set();
+
+/**
+ * Register the background script's agentTabIds for dialog tab selection.
+ * Call once from background.ts module top-level.
+ */
+export function registerAgentTabIds(ref: ReadonlySet<number>): void {
+  agentTabIdsRef = ref;
+}
+
 export async function getPermConfig(): Promise<PermissionGateConfig> {
   return await loadConfig();
 }
@@ -122,24 +136,19 @@ async function sendDialogToActiveTab(
   description: string,
   details?: string,
 ): Promise<number> {
+  const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true });
   let targetTabId: number | undefined;
 
-  // Prefer: AI's active tab
-  const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true });
-  if (activeTab?.id) {
-    const tabs = await browser.tabs.query({});
-    const agentTabIds = tabs
-      .filter(t => t.url && !t.url.startsWith("about:") && !t.url.startsWith("chrome:"))
-      .map(t => t.id)
-      .filter((id): id is number => id !== undefined);
-    const activeAgentTab = agentTabIds.find(id => id === activeTab.id);
-    if (activeAgentTab !== undefined) {
-      targetTabId = activeAgentTab;
-    }
+  // 1. Priority: active tab is in agentTabIds (AI-controlled tab)
+  if (activeTab?.id !== undefined && agentTabIdsRef.has(activeTab.id)) {
+    targetTabId = activeTab.id;
   }
-
-  // Fallback: any active tab
-  if (!targetTabId && activeTab?.id) {
+  // 2. Fallback: any AI-controlled tab
+  else if (agentTabIdsRef.size > 0) {
+    targetTabId = [...agentTabIdsRef][0];
+  }
+  // 3. Last resort: current active tab (even if not AI-controlled)
+  else if (activeTab?.id !== undefined) {
     targetTabId = activeTab.id;
   }
 
