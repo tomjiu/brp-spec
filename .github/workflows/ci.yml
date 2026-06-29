@@ -62,7 +62,7 @@ jobs:
 
       - name: Verify no binding drift
         run: |
-          git diff --exit-code bridge/bindings/ || (
+          git diff --exit-code -- bindings/ || (
             echo "::error::Rust types changed but bindings/ not committed. Run: cargo test"
             exit 1
           )
