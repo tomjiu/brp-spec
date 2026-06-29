@@ -5,6 +5,37 @@ All notable changes to the BRP (Browser Runtime Protocol) project are documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-06-29
+
+### ts-rs Type Alignment (PR #53)
+
+- Bridge ts-rs generated types auto-copied to `extension/src/generated/`
+- Extension imports generated types, reducing hand-written drift
+- Build script: `cargo test` generates → `prebuild` copies → `typecheck` verifies
+- CI binding drift check (`git diff --exit-code bindings/`) catches uncommitted changes
+- `tsconfig.json` include changed from allow-list to glob (`src/**/*.ts`)
+- `handleInitialize` returns `GeneratedInitializeResult` — tsc verifies compatibility
+- `SessionState` adds explicit `ts(rename_all = "snake_case")`
+
+### tabGroups Coloring Experimental (PR #54)
+
+- Firefox v139+ `browser.tabGroups` API integration
+- AI tabs auto-added to "BRP" group (blue)
+- Active request → group green
+- Permission denied → tab removed from group
+- Fallback: `!browser.tabGroups` → silent no-op, page-indicator (v0.5.1) remains
+
+### Test Summary
+Extension: **243 tests**
+Bridge: 56 tests
+
+### Breaking Changes
+None (ts-rs types are additive, tabGroups is Experimental with fallback)
+
+### Known Limitations
+- Error yellow group color deferred to v0.7.0
+- Real-machine verification needed: Firefox v139+ / Zen
+
 ## [0.5.2] — 2026-06-29
 
 ### Tab-level Permissions (PR #49)
