@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { formatPermissionPrompt, checkPermission, resolvePermission, registerAgentTabIds } from "../src/permissions/flow";
+import { formatPermissionPrompt, checkPermission, checkBlacklist, resolvePermission, registerAgentTabIds } from "../src/permissions/flow";
 import { DEFAULT_CONFIG } from "../src/permissions/config";
 
 // Mutable storage for mocking
@@ -177,5 +177,80 @@ describe("checkPermission ask path", () => {
       expect(result.code).toBe(-32001);
     }
     vi.useRealTimers();
+  });
+});
+
+describe("checkBlacklist", () => {
+  beforeEach(() => {
+    setupBrowserMock();
+    registerAgentTabIds(new Set([1]));
+  });
+
+  it("should block page.navigate to blacklisted domain", async () => {
+    storageMock.brpPermissionConfig = {
+      ...DEFAULT_CONFIG,
+      domainBlacklist: ["*.bank.com"],
+    };
+    const result = await checkBlacklist("page.navigate", { url: "https://login.bank.com" });
+    expect(result).not.toBeNull();
+    if (result) {
+      expect(result.code).toBe(-32002);
+      expect(result.data).toHaveProperty("errorCode", "BRP_USER_BLOCKED_DOMAIN");
+    }
+  });
+
+  it("should allow page.navigate to non-blacklisted domain", async () => {
+    storageMock.brpPermissionConfig = {
+      ...DEFAULT_CONFIG,
+      domainBlacklist: ["*.bank.com"],
+    };
+    const result = await checkBlacklist("page.navigate", { url: "https://google.com" });
+    expect(result).toBeNull();
+  });
+
+  it("should not check non-navigate methods", async () => {
+    storageMock.brpPermissionConfig = {
+      ...DEFAULT_CONFIG,
+      domainBlacklist: ["*.bank.com"],
+    };
+    expect(await checkBlacklist("element.click", { selector: { value: "..." } })).toBeNull();
+    expect(await checkBlacklist("script.execute", { code: "..." })).toBeNull();
+    expect(await checkBlacklist("tab.list", {})).toBeNull();
+  });
+
+  it("should allow when blacklist is empty", async () => {
+    storageMock.brpPermissionConfig = DEFAULT_CONFIG;
+    const result = await checkBlacklist("page.navigate", { url: "https://anything.com" });
+    expect(result).toBeNull();
+  });
+
+  it("should handle uri param (not just url)", async () => {
+    storageMock.brpPermissionConfig = {
+      ...DEFAULT_CONFIG,
+      domainBlacklist: ["evil.com"],
+    };
+    const result = await checkBlacklist("page.navigate", { uri: "https://evil.com" });
+    expect(result).not.toBeNull();
+    if (result) {
+      expect(result.code).toBe(-32002);
+    }
+  });
+});
+
+describe("E1/E2 interaction order", () => {
+  beforeEach(() => {
+    setupBrowserMock();
+    registerAgentTabIds(new Set([1]));
+  });
+
+  it("E2 should block before E1 asks (blacklist + sensitive domain)", async () => {
+    storageMock.brpPermissionConfig = {
+      ...DEFAULT_CONFIG,
+      domainBlacklist: ["*.bank.com"],
+      sensitiveDomains: ["*.bank.com"],
+    };
+    const result = await checkBlacklist("page.navigate", { url: "https://login.bank.com" });
+    expect(result).not.toBeNull();
+    expect(result?.code).toBe(-32002);
   });
 });

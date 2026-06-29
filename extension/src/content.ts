@@ -14,6 +14,8 @@ import type {
 import { validatePrecondition } from "./precondition";
 import { findElementWithFallback } from "./selector-fallback";
 import { showPermissionDialog, removeExistingDialog } from "./permissions/dialog";
+import { isBlacklisted, extractDomain } from "./permissions/checker";
+import { loadConfig } from "./permissions/config";
 import type { ITreeAPI } from "./types.content";
 import {
   isHTMLElement,
@@ -93,11 +95,26 @@ function invalidParams(msg: string): ContentError {
 
 // ─── Action Implementations ───
 
-function doClick(msg: ContentMessage): ContentResult {
+export async function doClick(msg: ContentMessage): Promise<ContentResult> {
   const { element: el, matchedType } = findElementWithFallback(
     msg.selector, msg.selectors, msg.nodeId, itree, msg.acceptFallback ?? false,
   );
   if (!el || !isHTMLElement(el)) return elementNotFound();
+
+  // ── E2 Domain Blacklist: check <a> href ──
+  if (el instanceof HTMLAnchorElement) {
+    const href = el.href; // absolute URL (browser-resolved)
+    if (href) {
+      const config = await loadConfig();
+      if (isBlacklisted(href, config.domainBlacklist)) {
+        const domain = extractDomain(href) ?? "unknown";
+        return {
+          error: `Domain blocked by user blacklist: ${domain}`,
+          errorCode: "BRP_USER_BLOCKED_DOMAIN",
+        };
+      }
+    }
+  }
 
   const preErr = validatePrecondition(el, msg.precondition);
   if (preErr) return preErr;
@@ -456,7 +473,7 @@ browser.runtime.onMessage.addListener(
           return itree.buildInteractionTree() as unknown as ContentResult;
 
         case "click":
-          return doClick(contentMsg);
+          return await doClick(contentMsg);
 
         case "type":
           return doType(contentMsg);

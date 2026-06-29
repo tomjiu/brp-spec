@@ -24,6 +24,12 @@ const permSaveBtn = document.getElementById("perm-save-btn") as HTMLButtonElemen
 const permResetBtn = document.getElementById("perm-reset-btn") as HTMLButtonElement;
 const permStatusEl = document.getElementById("perm-status") as HTMLDivElement;
 
+// Domain blacklist elements
+const blacklistEl = document.getElementById("blacklist-domains") as HTMLTextAreaElement;
+const blacklistSaveBtn = document.getElementById("blacklist-save-btn") as HTMLButtonElement;
+const blacklistClearBtn = document.getElementById("blacklist-clear-btn") as HTMLButtonElement;
+const blacklistStatusEl = document.getElementById("blacklist-status") as HTMLDivElement;
+
 const DEFAULT_GATES = {
   scriptExecute: "ask",
   navigateSensitiveDomains: "ask",
@@ -123,6 +129,7 @@ async function loadPermissionGates(): Promise<void> {
       gateClick.value = config.permissionGates.clickSensitiveButtons || "ask";
       sensitiveDomainsEl.value = (config.sensitiveDomains || DEFAULT_DOMAINS).join("\n");
       sensitiveButtonsEl.value = (config.sensitiveButtonPatterns || DEFAULT_BUTTONS).join("\n");
+      blacklistEl.value = (config.domainBlacklist || []).join("\n");
     } else {
       resetPermissionGates();
     }
@@ -155,6 +162,10 @@ permSaveBtn.addEventListener("click", async () => {
         .split("\n")
         .map((s: string) => s.trim())
         .filter((s: string) => s.length > 0),
+      domainBlacklist: blacklistEl.value
+        .split("\n")
+        .map((s: string) => s.trim())
+        .filter((s: string) => s.length > 0),
     };
     await browser.storage.local.set({ brpPermissionConfig: config });
     permStatusEl.textContent = "Permission gates saved.";
@@ -179,4 +190,31 @@ permResetBtn.addEventListener("click", async () => {
     permStatusEl.className = "status error";
     setTimeout(() => { permStatusEl.className = "status"; }, 3000);
   }
+});
+
+// ─── Domain Blacklist Handlers ───
+
+blacklistSaveBtn.addEventListener("click", async () => {
+  try {
+    const result = await browser.storage.local.get("brpPermissionConfig");
+    const config = result.brpPermissionConfig || {};
+    const patterns = blacklistEl.value
+      .split("\n")
+      .map((s: string) => s.trim())
+      .filter((s: string) => s.length > 0);
+    await browser.storage.local.set({
+      brpPermissionConfig: { ...config, domainBlacklist: patterns },
+    });
+    blacklistStatusEl.textContent = "Blacklist saved.";
+    blacklistStatusEl.className = "status success";
+    setTimeout(() => { blacklistStatusEl.className = "status"; }, 3000);
+  } catch (e: unknown) {
+    blacklistStatusEl.textContent = "Failed: " + (e instanceof Error ? e.message : String(e));
+    blacklistStatusEl.className = "status error";
+    setTimeout(() => { blacklistStatusEl.className = "status"; }, 3000);
+  }
+});
+
+blacklistClearBtn.addEventListener("click", () => {
+  blacklistEl.value = "";
 });

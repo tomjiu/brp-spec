@@ -113,6 +113,23 @@
     <div id="perm-status" class="status"></div>
   </div>
 
+  <div class="section">
+    <h2 style="font-size:16px;margin-bottom:12px">🚫 Domain Blacklist</h2>
+    <p class="hint">
+      AI will be <strong>hard-blocked</strong> from navigating to or clicking links
+      pointing to these domains. Wildcard supported (e.g. <code>*.bank.com</code>).
+      One pattern per line.
+    </p>
+    <label for="blacklist-domains">Blocked Domains</label>
+    <textarea id="blacklist-domains" rows="6"
+      placeholder="*.bank.com&#10;evil.com&#10;*.phishing-site.net"></textarea>
+    <div class="btn-row" style="margin-top:8px">
+      <button id="blacklist-save-btn" class="primary">Save Blacklist</button>
+      <button id="blacklist-clear-btn">Clear Blacklist</button>
+    </div>
+    <div id="blacklist-status" class="status"></div>
+  </div>
+
   <style>
     select { width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; margin-bottom: 14px; box-sizing: border-box; }
     textarea { width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; font-family: monospace; box-sizing: border-box; resize: vertical; margin-bottom: 14px; }
