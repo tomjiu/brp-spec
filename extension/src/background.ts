@@ -10,7 +10,7 @@ import {
 import { releaseBridge, startBridge } from "./native";
 import type { BridgeMessage, JsonObject, JsonRpcRequest, JsonValue, MessageId } from "./types";
 import { errorMessage, getBoolean, getNumber, getObject, getString, isJsonObject } from "./types";
-import { checkAllowlist, checkBlacklist, checkPermission, registerAgentTabIds, resolvePermission } from "./permissions/flow";
+import { checkAllowlist, checkBlacklist, checkPermission, registerControllableTabs, resolvePermission } from "./permissions/flow";
 import { loadConfig } from "./permissions/config";
 import { shouldBlur } from "./screenshot-blur";
 import {
@@ -25,10 +25,10 @@ let ws: WebSocket | null = null;
 let reconnectAttempts = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let authenticated = false;
-const agentTabIds = new Set<number>();
+const controllableTabs = new Set<number>();
 
-// Register agent tab IDs for permission dialog tab selection
-registerAgentTabIds(agentTabIds);
+// Register controllable tabs for permission dialog tab selection
+registerControllableTabs(controllableTabs);
 
 // ─── E1 Permission Gating ───
 
@@ -44,8 +44,8 @@ browser.runtime.onMessage.addListener((msg: unknown) => {
 });
 
 browser.tabs.onRemoved.addListener((tabId: number): void => {
-  agentTabIds.delete(tabId);
-  updateBadge(agentTabIds.size);
+  controllableTabs.delete(tabId);
+  updateBadge(controllableTabs.size);
 });
 
 async function getAuthToken(): Promise<string | null> {
@@ -415,7 +415,7 @@ async function handleTabOpen(params?: JsonObject): Promise<JsonObject> {
   if (urlErr) throw new Error(urlErr);
 
   const tab = await browser.tabs.create({ url, active: getBoolean(params, "active") !== false });
-  if (typeof tab.id === "number") { agentTabIds.add(tab.id); updateBadge(agentTabIds.size); }
+  if (typeof tab.id === "number") { controllableTabs.add(tab.id); updateBadge(controllableTabs.size); }
   return { tabId: tab.id, windowId: tab.windowId, url: tab.url };
 }
 
@@ -457,8 +457,8 @@ async function handlePageNavigate(params?: JsonObject): Promise<JsonObject> {
   const tabErr = validateTabId(tabId);
   if (tabErr) throw new Error(tabErr);
 
-  agentTabIds.add(tabId);
-  updateBadge(agentTabIds.size);
+  controllableTabs.add(tabId);
+  updateBadge(controllableTabs.size);
   await browser.tabs.update(tabId, { url });
   await waitForNavigation(tabId, 15000);
   return { uri: url };
@@ -662,7 +662,7 @@ function waitForNavigation(tabId: number, timeoutMs: number): Promise<void> {
 }
 
 browser.webNavigation.onBeforeNavigate.addListener((details: browser.webNavigation._OnBeforeNavigateDetails): void => {
-  const decision = shouldBlockNavigation(details.url, details.tabId, agentTabIds);
+  const decision = shouldBlockNavigation(details.url, details.tabId, controllableTabs);
   if (!decision.block) return;
 
   console.warn(`[BRP] Navigation sentinel: BLOCKED ${details.url} in tab ${details.tabId}`);

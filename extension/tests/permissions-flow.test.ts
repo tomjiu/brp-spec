@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { formatPermissionPrompt, checkPermission, checkAllowlist, checkBlacklist, resolvePermission, registerAgentTabIds } from "../src/permissions/flow";
+import { formatPermissionPrompt, checkPermission, checkAllowlist, checkBlacklist, resolvePermission, registerControllableTabs } from "../src/permissions/flow";
 import { DEFAULT_CONFIG } from "../src/permissions/config";
 
 // Mutable storage for mocking
@@ -81,7 +81,7 @@ describe("formatPermissionPrompt", () => {
 describe("checkPermission", () => {
   beforeEach(() => {
     setupBrowserMock();
-    registerAgentTabIds(new Set([1]));
+    registerControllableTabs(new Set([1]));
   });
 
   it("should return null for allow decision (non-gated method)", async () => {
@@ -108,7 +108,7 @@ describe("checkPermission", () => {
 
   it("should deny on dialog injection failure (fail-closed)", async () => {
     setupBrowserMock({ sendMessageRejects: true });
-    registerAgentTabIds(new Set([1]));
+    registerControllableTabs(new Set([1]));
     storageMock.brpPermissionConfig = DEFAULT_CONFIG;
 
     const result = await checkPermission(5, "script.execute", { code: "test" });
@@ -123,7 +123,7 @@ describe("checkPermission", () => {
 describe("checkPermission ask path", () => {
   beforeEach(() => {
     setupBrowserMock();
-    registerAgentTabIds(new Set([1]));
+    registerControllableTabs(new Set([1]));
     storageMock.brpPermissionConfig = DEFAULT_CONFIG;
   });
 
@@ -183,7 +183,7 @@ describe("checkPermission ask path", () => {
 describe("checkBlacklist", () => {
   beforeEach(() => {
     setupBrowserMock();
-    registerAgentTabIds(new Set([1]));
+    registerControllableTabs(new Set([1]));
   });
 
   it("should block page.navigate to blacklisted domain", async () => {
@@ -240,7 +240,7 @@ describe("checkBlacklist", () => {
 describe("E1/E2 interaction order", () => {
   beforeEach(() => {
     setupBrowserMock();
-    registerAgentTabIds(new Set([1]));
+    registerControllableTabs(new Set([1]));
   });
 
   it("E2 should block before E1 asks (blacklist + sensitive domain)", async () => {
@@ -258,7 +258,7 @@ describe("E1/E2 interaction order", () => {
 describe("Allowlist/Blacklist interaction", () => {
   beforeEach(() => {
     setupBrowserMock();
-    registerAgentTabIds(new Set([1]));
+    registerControllableTabs(new Set([1]));
     storageMock.brpPermissionConfig = {
       ...DEFAULT_CONFIG,
       domainAllowlist: ["*.trusted.com"],

@@ -92,9 +92,9 @@ export function isRestrictedUrl(url: unknown): boolean {
 export function shouldBlockNavigation(
   url: string | undefined,
   tabId: number,
-  agentTabIds: ReadonlySet<number>,
+  controllableTabs: ReadonlySet<number>,
 ): NavigationDecision {
-  if (!agentTabIds.has(tabId)) return { block: false };
+  if (!controllableTabs.has(tabId)) return { block: false };
   if (!url) return { block: false };
   if (url === "about:blank") return { block: false };
 

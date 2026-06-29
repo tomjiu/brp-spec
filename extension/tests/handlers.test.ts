@@ -172,55 +172,55 @@ describe("isRestrictedUrl", () => {
 // --- Navigation Sentinel ---
 
 describe("shouldBlockNavigation", () => {
-  let agentTabIds: Set<number>;
+  let controllableTabs: Set<number>;
 
   beforeEach(() => {
-    agentTabIds = new Set([10, 20, 30]);
+    controllableTabs = new Set([10, 20, 30]);
   });
 
   it("allows all navigations for non-agent tabs", () => {
-    expect(BRP.shouldBlockNavigation("file:///etc/passwd", 99, agentTabIds).block).toBe(false);
-    expect(BRP.shouldBlockNavigation("javascript:alert(1)", 99, agentTabIds).block).toBe(false);
-    expect(BRP.shouldBlockNavigation("data:text/html,hi", 99, agentTabIds).block).toBe(false);
+    expect(BRP.shouldBlockNavigation("file:///etc/passwd", 99, controllableTabs).block).toBe(false);
+    expect(BRP.shouldBlockNavigation("javascript:alert(1)", 99, controllableTabs).block).toBe(false);
+    expect(BRP.shouldBlockNavigation("data:text/html,hi", 99, controllableTabs).block).toBe(false);
   });
 
   it("allows http(s) navigations for agent tabs", () => {
-    expect(BRP.shouldBlockNavigation("https://example.com", 10, agentTabIds).block).toBe(false);
-    expect(BRP.shouldBlockNavigation("http://localhost:3000", 20, agentTabIds).block).toBe(false);
+    expect(BRP.shouldBlockNavigation("https://example.com", 10, controllableTabs).block).toBe(false);
+    expect(BRP.shouldBlockNavigation("http://localhost:3000", 20, controllableTabs).block).toBe(false);
   });
 
   it("allows about:blank for agent tabs", () => {
-    expect(BRP.shouldBlockNavigation("about:blank", 10, agentTabIds).block).toBe(false);
+    expect(BRP.shouldBlockNavigation("about:blank", 10, controllableTabs).block).toBe(false);
   });
 
   it("blocks file: for agent tabs", () => {
-    const result = BRP.shouldBlockNavigation("file:///etc/passwd", 10, agentTabIds);
+    const result = BRP.shouldBlockNavigation("file:///etc/passwd", 10, controllableTabs);
     expect(result.block).toBe(true);
     expect(result.reason).toContain("sentinel");
   });
 
   it("blocks javascript: for agent tabs", () => {
-    const result = BRP.shouldBlockNavigation("javascript:alert(1)", 20, agentTabIds);
+    const result = BRP.shouldBlockNavigation("javascript:alert(1)", 20, controllableTabs);
     expect(result.block).toBe(true);
   });
 
   it("blocks data: for agent tabs", () => {
-    const result = BRP.shouldBlockNavigation("data:text/html,<h1>hi</h1>", 30, agentTabIds);
+    const result = BRP.shouldBlockNavigation("data:text/html,<h1>hi</h1>", 30, controllableTabs);
     expect(result.block).toBe(true);
   });
 
   it("blocks blob: for agent tabs", () => {
-    const result = BRP.shouldBlockNavigation("blob:https://example.com/uuid", 10, agentTabIds);
+    const result = BRP.shouldBlockNavigation("blob:https://example.com/uuid", 10, controllableTabs);
     expect(result.block).toBe(true);
   });
 
   it("allows when URL is null or empty", () => {
-    expect(BRP.shouldBlockNavigation(null as unknown as string, 10, agentTabIds).block).toBe(false);
-    expect(BRP.shouldBlockNavigation("", 10, agentTabIds).block).toBe(false);
+    expect(BRP.shouldBlockNavigation(null as unknown as string, 10, controllableTabs).block).toBe(false);
+    expect(BRP.shouldBlockNavigation("", 10, controllableTabs).block).toBe(false);
   });
 
   it("allows invalid URLs (let browser handle them)", () => {
-    expect(BRP.shouldBlockNavigation("not a url", 10, agentTabIds).block).toBe(false);
+    expect(BRP.shouldBlockNavigation("not a url", 10, controllableTabs).block).toBe(false);
   });
 });
 
