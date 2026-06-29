@@ -108,11 +108,14 @@
 - [x] **Page Indicator** Content script floating status bar on each page
 - [x] **Domain Allowlist** Skip E1 ask for trusted domains, allowlist takes priority over blacklist
 
-## v0.5.2 — Tab-level Permissions + tabGroups [ ]
+## v0.5.2 — Tab-level Permissions + History Access [~]
 
-- [ ] Protected tabs (user-controlled controllable state)
-- [ ] tabGroups coloring (Firefox v139+, Zen real-machine verify)
-- [ ] Browser history access (optional permission)
+- [ ] **Tab Permission Check** `controllableTabs` Set + `BRP_TAB_NOT_CONTROLLABLE` error
+- [ ] **tab.setControllable** User/AI can toggle tab controllable state
+- [ ] **Auto-demote** Tab demotes to not-controllable on user E1 denial
+- [ ] **Indicator Click** Page indicator click toggles controllable
+- [ ] **Popup UI** Extension popup lists all tabs with controllable toggle
+- [ ] **History Access** Optional `history` permission + `history.search`/`history.delete` methods
 
 ## v1.0-pre — Stable API + Compat [ ]
 
