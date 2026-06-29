@@ -15,4 +15,5 @@ await Promise.all([
   build({ ...common, entryPoints: ["src/itree.ts"], outfile: "dist/itree.js" }),
   build({ ...common, entryPoints: ["src/content.ts"], outfile: "dist/content.js" }),
   build({ ...common, entryPoints: ["options/options.ts"], outfile: "dist/options.js" }),
+  build({ ...common, entryPoints: ["popup/popup.ts"], outfile: "dist/popup.js" }),
 ]);

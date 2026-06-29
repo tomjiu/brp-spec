@@ -74,4 +74,15 @@ describe("page-indicator", () => {
     vi.advanceTimersByTime(5000);
     expect(el.style.opacity).toBe("1"); // still fully visible
   });
+
+  it("should call browser.runtime.sendMessage on click", () => {
+    const sendMessageMock = vi.fn(() => Promise.resolve());
+    vi.stubGlobal("browser", { runtime: { sendMessage: sendMessageMock } });
+    updateIndicator("idle");
+    const el = dom.window.document.getElementById("brp-page-indicator")!;
+    el.dispatchEvent(new dom.window.MouseEvent("click"));
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "__brp_toggle_controllable__" }),
+    );
+  });
 });

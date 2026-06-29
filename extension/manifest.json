@@ -40,7 +40,8 @@
       "32": "icons/gray-32.png",
       "48": "icons/gray-48.png"
     },
-    "default_title": "BRP Bridge"
+    "default_title": "BRP Bridge",
+    "default_popup": "popup/popup.html"
   },
   "browser_specific_settings": {
     "gecko": {

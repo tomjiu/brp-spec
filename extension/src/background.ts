@@ -40,6 +40,21 @@ registerControllableTabs(controllableTabs);
 browser.runtime.onMessage.addListener((msg: unknown) => {
   if (!isJsonObject(msg)) return;
   const m = msg as Record<string, unknown>;
+
+  // ── v0.5.2: Indicator toggle controllable ──
+  if (m.action === "__brp_toggle_controllable__") {
+    void handleToggleControllable();
+    return;
+  }
+
+  // ── v0.5.2: Popup query controllable tabs ──
+  if (m.action === "__brp_get_controllable_tabs__") {
+    Promise.resolve({ controllable: [...controllableTabs] }).then(
+      (resp) => { try { browser.runtime.sendMessage(resp); } catch { /* ok */ } },
+    );
+    return;
+  }
+
   if (m.action !== "__brp_permission_response__") return;
 
   const requestId = m.requestId as string;
@@ -467,6 +482,23 @@ async function handleTabSetControllable(params?: JsonObject): Promise<JsonObject
   }).catch(() => {});
 
   return { tabId, controllable: ctrl };
+}
+
+/** v0.5.2: Toggle controllable state of active tab (from indicator click / popup). */
+async function handleToggleControllable(): Promise<void> {
+  const tabId = await getActiveTabId();
+  if (tabId === null) return;
+  const currentlyControllable = controllableTabs.has(tabId);
+  if (currentlyControllable) {
+    controllableTabs.delete(tabId);
+  } else {
+    controllableTabs.add(tabId);
+  }
+  updateBadge(controllableTabs.size);
+  browser.tabs.sendMessage(tabId, {
+    action: "__brp_indicator_update__",
+    status: currentlyControllable ? "hidden" : "idle",
+  }).catch(() => {});
 }
 
 async function handleTabOpen(params?: JsonObject): Promise<JsonObject> {
