@@ -5,6 +5,66 @@ All notable changes to the BRP (Browser Runtime Protocol) project are documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-06-29
+
+### E1: Permission Gating
+
+AI actions on sensitive targets require user confirmation via a browser-native dialog (Allow / Deny / Always Allow this Session). Covers script execution, navigation to sensitive domains, and clicking sensitive buttons.
+
+- 3-state gate per action: `always` (block), `ask` (prompt), `never` (allow)
+- `sensitiveDomains`: wildcard domain patterns (e.g. `*.bank.com`)
+- `sensitiveButtonPatterns`: keyword/attribute/CSS matching
+- Configurable via Extension Options page
+- `PermissionGateConfig` persisted in `browser.storage.local` with deep merge
+
+### E2: Domain Blacklist + Click Hard-Block
+
+Hard-wired domain blacklist prevents AI from navigating to or clicking links pointing to blacklisted domains. Extension intercepts `page.navigate` and `<a href>` clicks in content scripts.
+
+- `domainBlacklist` field in `PermissionGateConfig` (default empty)
+- `<a href>` click interception in content script — click event listener extracts domain, checks blacklist before dispatching
+- Error code: `BRP_DOMAIN_BLACKLISTED`
+- 201-line `blacklist-click.test.ts` covering 14 scenarios
+
+### E5: Screenshot Blur + Log Sanitizer
+
+Screenshot blur: temporary `filter: blur(8px)` CSS applied to sensitive form fields before `page.screenshot`, removed immediately after. Default off.
+
+- 3-state gate: `always` / `ask` / `never`
+- 5 built-in field types: password, credit card, CVV, email, SSN
+- Custom CSS selectors for advanced use cases
+- Configurable via Extension Options page
+
+Log sanitizer: regex-based redaction of token/password/bearer patterns in bridge logs.
+
+- `sanitized_log!` macro wrapping `log::info!`
+- 4 patterns: `token=xxx`, `password=xxx`, `Authorization: Bearer xxx`, `"authToken": "xxx"`
+
+### B2: Multi-token
+
+Per-client tokens for MCP clients. Master token issues/revokes client tokens via JSON-RPC API.
+
+- Master token from `BRP_MASTER_TOKEN` env or auto-generated (`mt_` prefix)
+- Client tokens via `token.issue` JSON-RPC method (`ct_` prefix)
+- `token.revoke` — independently revocable without affecting other clients
+- `token.list` — list all active client tokens
+- `tokens.json` persistence with 0600 permissions
+- Adapter `--issue-token` / `--revoke-token` CLI flags
+- Backward compatible: legacy `auth_token` still valid
+
+### Test Summary
+
+| Component | Tests |
+|-----------|-------|
+| Extension | 170 |
+| Bridge | 56 |
+
+### Breaking Changes
+
+None. All new features are optional with backward-compatible defaults.
+
+---
+
 ## [0.4.1] — 2026-06-28
 
 ### E3: DOM Precondition Validation
