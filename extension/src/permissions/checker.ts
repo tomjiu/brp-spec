@@ -118,3 +118,29 @@ function isSensitiveClick(
 
   return false;
 }
+
+// ─── E2 Domain Blacklist ───
+
+/**
+ * Check if a URL's domain matches any pattern in the blacklist.
+ * Reuses matchDomainPattern for wildcard support (*.bank.com).
+ */
+export function isBlacklisted(url: string, blacklist: string[]): boolean {
+  if (!url || blacklist.length === 0) return false;
+  return blacklist.some((pattern) => matchDomainPattern(pattern, url));
+}
+
+/**
+ * Extract the domain from a URL string.
+ * Returns null for invalid URLs or non-http(s) schemes.
+ */
+export function extractDomain(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    const scheme = parsed.protocol.toLowerCase();
+    if (scheme !== "http:" && scheme !== "https:") return null;
+    return parsed.hostname;
+  } catch {
+    return null;
+  }
+}

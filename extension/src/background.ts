@@ -10,7 +10,7 @@ import {
 import { releaseBridge, startBridge } from "./native";
 import type { BridgeMessage, JsonObject, JsonRpcRequest, JsonValue, MessageId } from "./types";
 import { errorMessage, getBoolean, getNumber, getObject, getString, isJsonObject } from "./types";
-import { checkPermission, registerAgentTabIds, resolvePermission } from "./permissions/flow";
+import { checkBlacklist, checkPermission, registerAgentTabIds, resolvePermission } from "./permissions/flow";
 
 const WS_URL = "ws://127.0.0.1:9817";
 const RECONNECT_BASE_DELAY = 1000;
@@ -244,6 +244,13 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
   const id = msg.id;
   const method = msg.method;
   const params = msg.params;
+
+  // ── E2 Domain Blacklist (hard block, no dialog) ──
+  const blacklistError = await checkBlacklist(method, params);
+  if (blacklistError) {
+    sendToBridge({ jsonrpc: "2.0", id, error: blacklistError });
+    return;
+  }
 
   // ── E1 Permission Gating ──
   const permError = await checkPermission(id, method, params);

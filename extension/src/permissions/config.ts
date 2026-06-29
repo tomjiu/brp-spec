@@ -15,6 +15,7 @@ export interface PermissionGateConfig {
   };
   sensitiveDomains: string[];
   sensitiveButtonPatterns: string[];
+  domainBlacklist: string[];
 }
 
 export const DEFAULT_CONFIG: PermissionGateConfig = {
@@ -37,6 +38,7 @@ export const DEFAULT_CONFIG: PermissionGateConfig = {
     "提交订单",
     "删除",
   ],
+  domainBlacklist: [],
 };
 
 const STORAGE_KEY = "brpPermissionConfig";

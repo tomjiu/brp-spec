@@ -7,7 +7,7 @@
  * Separated from background.ts for testability.
  */
 
-import { shouldGate } from "./checker";
+import { shouldGate, isBlacklisted } from "./checker";
 import { loadConfig, type PermissionGateConfig } from "./config";
 import type { JsonObject, MessageId } from "../types";
 
@@ -116,6 +116,36 @@ async function requestUserPermission(
         resolve(false); // fail-closed: dialog failure = deny
       });
   });
+}
+
+/**
+ * Check domain blacklist (E2). Hard-blocks navigation to blacklisted domains.
+ * Returns null if allowed, or a JSON-RPC error object if blocked.
+ *
+ * NOTE: Only checks page.navigate here. element.click <a> href check
+ * is done in content.ts (where DOM is accessible).
+ */
+export async function checkBlacklist(
+  method: string,
+  params: Record<string, unknown> | undefined,
+): Promise<JsonObject | null> {
+  if (method !== "page.navigate") return null;
+
+  const url = (params?.url || params?.uri) as string | undefined;
+  if (!url) return null;
+
+  const config = await getPermConfig();
+  if (isBlacklisted(url, config.domainBlacklist)) {
+    return {
+      code: -32002,
+      message: `Domain blocked by user blacklist: ${url}`,
+      data: {
+        errorCode: "BRP_USER_BLOCKED_DOMAIN",
+        retriable: false,
+      },
+    };
+  }
+  return null;
 }
 
 /**
