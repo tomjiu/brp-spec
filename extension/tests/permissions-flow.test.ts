@@ -5,7 +5,7 @@
  * and tab selection. Uses minimal mocking for browser.storage/tabs.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { formatPermissionPrompt, checkPermission, resolvePermission, registerAgentTabIds } from "../src/permissions/flow";
 import { DEFAULT_CONFIG } from "../src/permissions/config";
 
@@ -117,5 +117,65 @@ describe("checkPermission", () => {
     if (result) {
       expect(result.code).toBe(-32001);
     }
+  });
+});
+
+describe("checkPermission ask path", () => {
+  beforeEach(() => {
+    setupBrowserMock();
+    registerAgentTabIds(new Set([1]));
+    storageMock.brpPermissionConfig = DEFAULT_CONFIG;
+  });
+
+  it("should resolve null when user clicks Allow", async () => {
+    const promise = checkPermission(10, "script.execute", { code: "test" });
+
+    // Wait for sendDialogToActiveTab to call tabs.sendMessage
+    await new Promise(r => setTimeout(r, 50));
+
+    // Extract requestId from sendMessage call
+    const sendCalls = sendMessageMock.mock.calls;
+    expect(sendCalls.length).toBeGreaterThanOrEqual(1);
+    const requestId = sendCalls[0][1].requestId;
+
+    resolvePermission(requestId, "allow");
+
+    const result = await promise;
+    expect(result).toBeNull(); // Allow → passes through
+  });
+
+  it("should return BRP_PERMISSION_DENIED when user clicks Deny", async () => {
+    const promise = checkPermission(11, "script.execute", { code: "test" });
+
+    await new Promise(r => setTimeout(r, 50));
+
+    const sendCalls = sendMessageMock.mock.calls;
+    expect(sendCalls.length).toBeGreaterThanOrEqual(1);
+    const requestId = sendCalls[0][1].requestId;
+
+    resolvePermission(requestId, "deny");
+
+    const result = await promise;
+    expect(result).not.toBeNull();
+    if (result) {
+      expect(result.code).toBe(-32001);
+      expect(result.data).toHaveProperty("errorCode", "BRP_PERMISSION_DENIED");
+    }
+  });
+
+  it("should deny on 60s timeout", async () => {
+    vi.useFakeTimers();
+
+    const promise = checkPermission(12, "script.execute", { code: "test" });
+
+    // Advance past the 60s dialog timeout
+    await vi.advanceTimersByTimeAsync(60001);
+
+    const result = await promise;
+    expect(result).not.toBeNull();
+    if (result) {
+      expect(result.code).toBe(-32001);
+    }
+    vi.useRealTimers();
   });
 });
