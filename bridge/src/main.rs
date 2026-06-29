@@ -21,6 +21,7 @@
 /// Security detail: see SECURITY.md and docs/SECURITY-ARCHITECTURE-DECISIONS.md
 mod auth;
 mod config;
+mod log_sanitizer;
 #[cfg(unix)]
 mod ipc_unix;
 #[cfg(windows)]
@@ -194,7 +195,7 @@ async fn run_bootstrap() {
         "token": config.auth_token
     });
 
-    log::info!("[Bootstrap] Sending token message: {}", token_msg);
+    sanitized_log!(info, "[Bootstrap] Sending token message: {}", token_msg);
 
     if let Err(e) = crate::transport::send_native_message(&token_msg).await {
         log::error!("[Bootstrap] Failed to send token: {}", e);

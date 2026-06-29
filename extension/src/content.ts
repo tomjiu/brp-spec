@@ -16,6 +16,8 @@ import { findElementWithFallback } from "./selector-fallback";
 import { showPermissionDialog, removeExistingDialog } from "./permissions/dialog";
 import { isBlacklisted, extractDomain } from "./permissions/checker";
 import { loadConfig } from "./permissions/config";
+import { applyBlur } from "./screenshot-blur";
+import type { ScreenshotBlurConfig } from "./permissions/config";
 import type { ITreeAPI } from "./types.content";
 import {
   isHTMLElement,
@@ -432,6 +434,37 @@ function doWaitForSelector(msg: ContentMessage): Promise<ContentResult> {
   });
 }
 
+// ─── E5 Screenshot Blur Handlers ───
+
+let screenshotBlurCleanup: (() => void) | null = null;
+
+function handleScreenshotBlurApply(msg: Record<string, unknown>): ContentResult {
+  const config = msg.config as ScreenshotBlurConfig;
+  if (!config) return { error: "Missing blur config", errorCode: "BRP_INVALID_PARAMS" };
+  if (screenshotBlurCleanup) { screenshotBlurCleanup(); screenshotBlurCleanup = null; }
+  screenshotBlurCleanup = applyBlur(config);
+  return { success: true, value: null };
+}
+
+function handleScreenshotBlurRemove(): ContentResult {
+  if (screenshotBlurCleanup) { screenshotBlurCleanup(); screenshotBlurCleanup = null; }
+  return { success: true, value: null };
+}
+
+async function handleScreenshotBlurAsk(msg: Record<string, unknown>): Promise<ContentResult> {
+  const decision = await showPermissionDialog({
+    requestId: msg.requestId as string,
+    title: (msg.title as string) || "AI is taking a screenshot",
+    description: (msg.description as string) || "Blur sensitive fields?",
+  });
+  browser.runtime.sendMessage({
+    action: "__brp_screenshot_blur_response__",
+    requestId: msg.requestId,
+    decision: decision === "allow" ? "blur" : "noblur",
+  }).catch(() => {});
+  return { success: true, value: decision };
+}
+
 // ─── Content Script Entry Point ───
 
 /**
@@ -508,6 +541,15 @@ browser.runtime.onMessage.addListener(
         case "__brp_permission_dialog_close__":
           removeExistingDialog();
           return { success: true, value: null };
+
+        case "__brp_screenshot_blur_apply__":
+          return handleScreenshotBlurApply(msg as Record<string, unknown>);
+
+        case "__brp_screenshot_blur_remove__":
+          return handleScreenshotBlurRemove();
+
+        case "__brp_screenshot_blur_ask__":
+          return await handleScreenshotBlurAsk(msg as Record<string, unknown>);
 
         default:
           return { error: `Unknown action: ${contentMsg.action}` };

@@ -11,6 +11,8 @@ import { releaseBridge, startBridge } from "./native";
 import type { BridgeMessage, JsonObject, JsonRpcRequest, JsonValue, MessageId } from "./types";
 import { errorMessage, getBoolean, getNumber, getObject, getString, isJsonObject } from "./types";
 import { checkBlacklist, checkPermission, registerAgentTabIds, resolvePermission } from "./permissions/flow";
+import { loadConfig } from "./permissions/config";
+import { shouldBlur } from "./screenshot-blur";
 
 const WS_URL = "ws://127.0.0.1:9817";
 const RECONNECT_BASE_DELAY = 1000;
@@ -501,8 +503,84 @@ async function handleScreenshot(params?: JsonObject): Promise<JsonObject> {
     windowId: null,
     options: { format: "jpeg" | "png" },
   ) => Promise<string>;
-  const dataUrl = await captureVisibleTab(null, { format: format === "jpeg" ? "jpeg" : "png" });
-  return { dataUrl };
+
+  // ── E5 Screenshot Blur ──
+  const config = await loadConfig();
+  let blurCleanup: (() => void) | null = null;
+
+  if (shouldBlur(config.screenshotBlur)) {
+    if (config.screenshotBlur.gate === "always") {
+      blurCleanup = await injectBlurIntoActiveTab();
+    } else if (config.screenshotBlur.gate === "ask") {
+      const shouldApplyBlur = await askScreenshotBlur();
+      if (shouldApplyBlur) {
+        blurCleanup = await injectBlurIntoActiveTab();
+      }
+    }
+  }
+
+  try {
+    if (blurCleanup) {
+      await new Promise(r => requestAnimationFrame(r));
+    }
+    const dataUrl = await captureVisibleTab(null, { format: format === "jpeg" ? "jpeg" : "png" });
+    return { dataUrl };
+  } finally {
+    if (blurCleanup) blurCleanup();
+  }
+}
+
+async function injectBlurIntoActiveTab(): Promise<() => void> {
+  const tabId = await getActiveTabId();
+  const config = await loadConfig();
+  await browser.tabs.sendMessage(tabId, {
+    action: "__brp_screenshot_blur_apply__",
+    config: config.screenshotBlur,
+  });
+  return () => {
+    browser.tabs.sendMessage(tabId, {
+      action: "__brp_screenshot_blur_remove__",
+    }).catch(() => {});
+  };
+}
+
+async function askScreenshotBlur(): Promise<boolean> {
+  const tabId = await getActiveTabId();
+  return new Promise<boolean>((resolve) => {
+    const requestId = `blur-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    let resolved = false;
+
+    const handler = (msg: unknown) => {
+      if (!isJsonObject(msg)) return;
+      const m = msg as Record<string, unknown>;
+      if (m.action === "__brp_screenshot_blur_response__" && m.requestId === requestId) {
+        browser.runtime.onMessage.removeListener(handler);
+        clearTimeout(timeout);
+        resolved = true;
+        resolve(m.decision === "blur");
+      }
+    };
+
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        browser.runtime.onMessage.removeListener(handler);
+        resolve(false);
+      }
+    }, 30000);
+
+    browser.runtime.onMessage.addListener(handler);
+
+    browser.tabs.sendMessage(tabId, {
+      action: "__brp_screenshot_blur_ask__",
+      requestId,
+      title: "AI is taking a screenshot",
+      description: "Sensitive form fields (passwords, credit cards) can be blurred for privacy. Allow blur?",
+    }).catch(() => {
+      clearTimeout(timeout);
+      browser.runtime.onMessage.removeListener(handler);
+      resolve(false);
+    });
+  });
 }
 
 async function handleScriptExecute(params?: JsonObject): Promise<JsonValue> {

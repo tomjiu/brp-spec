@@ -30,6 +30,18 @@ const blacklistSaveBtn = document.getElementById("blacklist-save-btn") as HTMLBu
 const blacklistClearBtn = document.getElementById("blacklist-clear-btn") as HTMLButtonElement;
 const blacklistStatusEl = document.getElementById("blacklist-status") as HTMLDivElement;
 
+// Screenshot blur elements
+const blurGate = document.getElementById("blur-gate") as HTMLSelectElement;
+const blurPassword = document.getElementById("blur-password") as HTMLInputElement;
+const blurCredit = document.getElementById("blur-credit") as HTMLInputElement;
+const blurCvv = document.getElementById("blur-cvv") as HTMLInputElement;
+const blurEmail = document.getElementById("blur-email") as HTMLInputElement;
+const blurSsn = document.getElementById("blur-ssn") as HTMLInputElement;
+const blurCustom = document.getElementById("blur-custom") as HTMLTextAreaElement;
+const blurSaveBtn = document.getElementById("blur-save-btn") as HTMLButtonElement;
+const blurResetBtn = document.getElementById("blur-reset-btn") as HTMLButtonElement;
+const blurStatusEl = document.getElementById("blur-status") as HTMLDivElement;
+
 const DEFAULT_GATES = {
   scriptExecute: "ask",
   navigateSensitiveDomains: "ask",
@@ -42,6 +54,10 @@ const DEFAULT_BUTTONS = [
   "submit order", "confirm payment", "delete",
   "确认支付", "提交订单", "删除",
 ];
+const DEFAULT_BLUR: { gate: string; fieldTypes: string[] } = {
+  gate: "never",
+  fieldTypes: ["password", "creditCard", "cvv"],
+};
 
 function showStatus(message: string, type: "success" | "error" = "success"): void {
   statusEl.textContent = message;
@@ -130,6 +146,18 @@ async function loadPermissionGates(): Promise<void> {
       sensitiveDomainsEl.value = (config.sensitiveDomains || DEFAULT_DOMAINS).join("\n");
       sensitiveButtonsEl.value = (config.sensitiveButtonPatterns || DEFAULT_BUTTONS).join("\n");
       blacklistEl.value = (config.domainBlacklist || []).join("\n");
+      // Load screenshot blur
+      const sb = config.screenshotBlur;
+      if (sb) {
+        blurGate.value = sb.gate || "never";
+        const types = sb.fieldTypes || [];
+        blurPassword.checked = types.includes("password");
+        blurCredit.checked = types.includes("creditCard");
+        blurCvv.checked = types.includes("cvv");
+        blurEmail.checked = types.includes("email");
+        blurSsn.checked = types.includes("ssn");
+        blurCustom.value = (sb.customSelectors || []).join("\n");
+      }
     } else {
       resetPermissionGates();
     }
@@ -166,6 +194,12 @@ permSaveBtn.addEventListener("click", async () => {
         .split("\n")
         .map((s: string) => s.trim())
         .filter((s: string) => s.length > 0),
+      screenshotBlur: {
+        gate: blurGate.value,
+        fieldTypes: buildBlurFieldTypes(),
+        customSelectors: blurCustom.value
+          .split("\n").map((s: string) => s.trim()).filter((s: string) => s.length > 0),
+      },
     };
     await browser.storage.local.set({ brpPermissionConfig: config });
     permStatusEl.textContent = "Permission gates saved.";
@@ -217,4 +251,51 @@ blacklistSaveBtn.addEventListener("click", async () => {
 
 blacklistClearBtn.addEventListener("click", () => {
   blacklistEl.value = "";
+});
+
+// ─── Screenshot Blur Handlers ───
+
+function buildBlurFieldTypes(): string[] {
+  const types: string[] = [];
+  if (blurPassword.checked) types.push("password");
+  if (blurCredit.checked) types.push("creditCard");
+  if (blurCvv.checked) types.push("cvv");
+  if (blurEmail.checked) types.push("email");
+  if (blurSsn.checked) types.push("ssn");
+  return types;
+}
+
+blurSaveBtn.addEventListener("click", async () => {
+  try {
+    const result = await browser.storage.local.get("brpPermissionConfig");
+    const config = result.brpPermissionConfig || {};
+    await browser.storage.local.set({
+      brpPermissionConfig: {
+        ...config,
+        screenshotBlur: {
+          gate: blurGate.value,
+          fieldTypes: buildBlurFieldTypes(),
+          customSelectors: blurCustom.value
+            .split("\n").map((s: string) => s.trim()).filter((s: string) => s.length > 0),
+        },
+      },
+    });
+    blurStatusEl.textContent = "Screenshot blur settings saved.";
+    blurStatusEl.className = "status success";
+    setTimeout(() => { blurStatusEl.className = "status"; }, 3000);
+  } catch (e: unknown) {
+    blurStatusEl.textContent = "Failed: " + (e instanceof Error ? e.message : String(e));
+    blurStatusEl.className = "status error";
+    setTimeout(() => { blurStatusEl.className = "status"; }, 3000);
+  }
+});
+
+blurResetBtn.addEventListener("click", () => {
+  blurGate.value = DEFAULT_BLUR.gate;
+  blurPassword.checked = DEFAULT_BLUR.fieldTypes.includes("password");
+  blurCredit.checked = DEFAULT_BLUR.fieldTypes.includes("creditCard");
+  blurCvv.checked = DEFAULT_BLUR.fieldTypes.includes("cvv");
+  blurEmail.checked = false;
+  blurSsn.checked = false;
+  blurCustom.value = "";
 });

@@ -7,6 +7,19 @@
 
 export type GateMode = "always" | "never" | "ask";
 
+export type SensitiveFieldType =
+  | "password"
+  | "creditCard"
+  | "cvv"
+  | "email"
+  | "ssn";
+
+export interface ScreenshotBlurConfig {
+  gate: GateMode;
+  fieldTypes: SensitiveFieldType[];
+  customSelectors: string[];
+}
+
 export interface PermissionGateConfig {
   permissionGates: {
     scriptExecute: GateMode;
@@ -16,6 +29,7 @@ export interface PermissionGateConfig {
   sensitiveDomains: string[];
   sensitiveButtonPatterns: string[];
   domainBlacklist: string[];
+  screenshotBlur: ScreenshotBlurConfig;
 }
 
 export const DEFAULT_CONFIG: PermissionGateConfig = {
@@ -39,6 +53,11 @@ export const DEFAULT_CONFIG: PermissionGateConfig = {
     "删除",
   ],
   domainBlacklist: [],
+  screenshotBlur: {
+    gate: "never",
+    fieldTypes: ["password", "creditCard", "cvv"],
+    customSelectors: [],
+  },
 };
 
 const STORAGE_KEY = "brpPermissionConfig";
@@ -59,24 +78,22 @@ export async function loadConfig(): Promise<PermissionGateConfig> {
           ...DEFAULT_CONFIG.permissionGates,
           ...(stored.permissionGates ?? {}),
         },
+        screenshotBlur: {
+          ...DEFAULT_CONFIG.screenshotBlur,
+          ...(stored.screenshotBlur ?? {}),
+        },
       };
     }
-  } catch {
-    // storage.local unavailable (e.g. content script context)
-  }
+  } catch { /* storage.local unavailable (e.g. content script context) */ }
   return { ...DEFAULT_CONFIG };
 }
 
-/**
- * Save permission config to storage.
- */
+/** Save permission config to storage. */
 export async function saveConfig(config: PermissionGateConfig): Promise<void> {
   await browser.storage.local.set({ [STORAGE_KEY]: config });
 }
 
-/**
- * Get current gate mode for a specific action type.
- */
+/** Get current gate mode for a specific action type. */
 export async function getGateMode(
   gateType: keyof PermissionGateConfig["permissionGates"],
 ): Promise<GateMode> {

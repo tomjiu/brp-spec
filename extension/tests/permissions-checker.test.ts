@@ -121,3 +121,12 @@ describe("shouldGate", () => {
   });
 
 });
+
+describe("screenshotBlur default config", () => {
+  it("should have gate=never by default", () => {
+    expect(DEFAULT_CONFIG.screenshotBlur.gate).toBe("never");
+  });
+  it("should have password, creditCard, cvv in fieldTypes by default", () => {
+    expect(DEFAULT_CONFIG.screenshotBlur.fieldTypes).toEqual(["password", "creditCard", "cvv"]);
+  });
+});
