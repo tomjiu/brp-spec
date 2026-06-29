@@ -18,6 +18,7 @@ tokio-tungstenite = "0.26"
 futures-util = "0.3"
 subtle = "2"
 ts-rs = { version = "10", features = ["uuid-impl"] }
+regex = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
