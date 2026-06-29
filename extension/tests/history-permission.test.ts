@@ -1,77 +1,48 @@
 /**
- * Tests for v0.5.2 History Access permission check.
+ * Tests for v0.5.2 History Access.
+ *
+ * Tests import real code from flow.ts — not copies.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
+import { checkHistoryAccessError, formatHistoryResults } from "../src/permissions/flow";
 
-// Mock browser.permissions
-const permissionsContainsMock = vi.fn();
-
-vi.stubGlobal("browser", {
-  permissions: {
-    contains: permissionsContainsMock,
-    request: vi.fn(),
-    remove: vi.fn(),
-  },
-  history: {
-    search: vi.fn(() => Promise.resolve([])),
-    deleteUrl: vi.fn(() => Promise.resolve()),
-  },
-  browserAction: {
-    setIcon: vi.fn(() => Promise.resolve()),
-    setBadgeText: vi.fn(() => Promise.resolve()),
-    setBadgeBackgroundColor: vi.fn(() => Promise.resolve()),
-  },
-});
-
-async function checkHistoryPermission(): Promise<boolean> {
-  return permissionsContainsMock({ permissions: ["history"] });
-}
-
-describe("history permission check", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+describe("checkHistoryAccessError", () => {
+  it("should return null when permission granted", () => {
+    expect(checkHistoryAccessError(true)).toBeNull();
   });
 
-  it("should return true when history permission is granted", async () => {
-    permissionsContainsMock.mockResolvedValue(true);
-    const granted = await checkHistoryPermission();
-    expect(granted).toBe(true);
+  it("should return error object when permission not granted", () => {
+    const err = checkHistoryAccessError(false);
+    expect(err).not.toBeNull();
+    expect(err!.code).toBe(-32004);
+    expect(err!.data).toHaveProperty("errorCode", "BRP_HISTORY_PERMISSION_NOT_GRANTED");
   });
 
-  it("should return false when history permission is not granted", async () => {
-    permissionsContainsMock.mockResolvedValue(false);
-    const granted = await checkHistoryPermission();
-    expect(granted).toBe(false);
-  });
-
-  it("should call permissions.contains with history permission", async () => {
-    permissionsContainsMock.mockResolvedValue(true);
-    await checkHistoryPermission();
-    expect(permissionsContainsMock).toHaveBeenCalledWith(
-      expect.objectContaining({ permissions: expect.arrayContaining(["history"]) }),
-    );
+  it("should include recovery hint", () => {
+    const err = checkHistoryAccessError(false);
+    expect(err!.data).toHaveProperty("recoveryHint");
+    expect((err!.data as Record<string, unknown>).recoveryHint).toBeTruthy();
   });
 });
 
-describe("history search result formatting", () => {
+describe("formatHistoryResults", () => {
   it("should format search results correctly", () => {
-    const raw = [{
-      id: "1",
-      url: "https://example.com",
-      title: "Example",
-      lastVisitTime: 1700000000000,
-      visitCount: 5,
-    }];
-
-    const formatted = raw.map((h) => ({
-      id: h.id,
-      url: h.url,
-      title: h.title,
-      lastVisitTime: h.lastVisitTime,
-      visitCount: h.visitCount,
-    }));
-
+    const raw = [{ id: "1", url: "https://example.com", title: "Example", lastVisitTime: 1700000000000, visitCount: 5 }];
+    const formatted = formatHistoryResults(raw);
     expect(formatted[0].url).toBe("https://example.com");
     expect(formatted[0].visitCount).toBe(5);
+  });
+
+  it("should handle missing fields with defaults", () => {
+    const raw = [{ id: "1" }];
+    const formatted = formatHistoryResults(raw);
+    expect(formatted[0].url).toBe("");
+    expect(formatted[0].title).toBe("");
+    expect(formatted[0].lastVisitTime).toBe(0);
+    expect(formatted[0].visitCount).toBe(0);
+  });
+
+  it("should handle empty array", () => {
+    expect(formatHistoryResults([])).toEqual([]);
   });
 });

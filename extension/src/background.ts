@@ -14,6 +14,7 @@ import {
   checkAllowlist, checkBlacklist, checkPermission,
   checkTabControllable, shouldDemoteTab, TAB_SCOPED_METHODS,
   registerControllableTabs, resolvePermission,
+  checkHistoryAccessError, formatHistoryResults,
 } from "./permissions/flow";
 import { loadConfig } from "./permissions/config";
 import { shouldBlur } from "./screenshot-blur";
@@ -763,15 +764,9 @@ async function handleScriptExecute(params?: JsonObject): Promise<JsonValue> {
 
 async function checkHistoryPermission(): Promise<void> {
   const granted = await browser.permissions.contains({ permissions: ["history"] });
-  if (!granted) {
-    throw Object.assign(new Error("History access not granted. Enable in extension options."), {
-      code: -32004,
-      data: {
-        errorCode: "BRP_HISTORY_PERMISSION_NOT_GRANTED",
-        retriable: false,
-        recoveryHint: "Enable history access in BRP Bridge extension options",
-      },
-    });
+  const error = checkHistoryAccessError(granted);
+  if (error) {
+    throw Object.assign(new Error(String(error.message)), error);
   }
 }
 
@@ -788,13 +783,7 @@ async function handleHistorySearch(params?: JsonObject): Promise<JsonObject> {
 
   const items = await browser.history.search(query);
   return {
-    items: items.map((h) => ({
-      id: h.id,
-      url: h.url,
-      title: h.title,
-      lastVisitTime: h.lastVisitTime,
-      visitCount: h.visitCount,
-    })),
+    items: formatHistoryResults(items),
     count: items.length,
   };
 }
