@@ -5,6 +5,48 @@ All notable changes to the BRP (Browser Runtime Protocol) project are documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — 2026-06-29
+
+### Status Icon (PR #44)
+
+Extension toolbar icon shows 4 states:
+- Gray: bridge disconnected
+- Blue: connected, idle
+- Green: AI request in progress
+- Red: 3+ consecutive failures (auto-recovers after 5s)
+
+Badge shows controllable tab count.
+
+### Page Indicator (PR #45)
+
+Floating status bar on each page shows AI control status:
+- Green: AI is operating this tab
+- Blue: tab is controllable but idle
+- Auto-fades after 3s, reappears on hover or status change
+
+### Domain Allowlist (PR #46)
+
+User-configurable allowlist skips E1 permission gate for trusted domains.
+Allowlist takes priority over blacklist (explicit trust > explicit block).
+
+- `domainAllowlist` field in `PermissionGateConfig`
+- Wildcard support (e.g. `*.github.com`)
+- Options page UI for editing
+
+### Bug Fixes
+- Fix `manifest.json` version (0.4.1 → 0.5.1, missed in v0.5.0)
+- Fix `handleRequest` default case missing `onRequestEnd` (status icon stuck on green)
+
+### Test Summary
+
+Extension: **198 tests**
+
+### Breaking Changes
+
+None.
+
+---
+
 ## [0.5.0] — 2026-06-29
 
 ### E1: Permission Gating

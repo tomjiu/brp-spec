@@ -102,11 +102,11 @@
 - [x] **E5** Screenshot permission gate, log sanitization, CSP hardening
 - [x] **B2** Multi-token (per-client tokens, independent revocation)
 
-## v0.5.1 — User Trust: Visibility + Control [~]
+## v0.5.1 — User Trust: Visibility + Control [x]
 
-- [ ] **Status Icon** Extension toolbar icon: 4 states (disconnected/idle/active/error) + badge
-- [ ] **Page Indicator** Content script floating status bar on each page
-- [ ] **Domain Allowlist** Skip E1 ask for trusted domains, allowlist takes priority over blacklist
+- [x] **Status Icon** Extension toolbar icon: 4 states (disconnected/idle/active/error) + badge
+- [x] **Page Indicator** Content script floating status bar on each page
+- [x] **Domain Allowlist** Skip E1 ask for trusted domains, allowlist takes priority over blacklist
 
 ## v0.5.2 — Tab-level Permissions + tabGroups [ ]
 
