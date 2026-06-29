@@ -123,6 +123,13 @@
 - [x] **tabGroups Coloring** (Experimental) Firefox v139+ tab group colors with page-indicator fallback
 - [x] **Fallback Detection** `!browser.tabGroups` → silent fallback to page-indicator
 
+## v0.7.0 — Test Infrastructure [~]
+
+- [ ] **Integration Framework** web-ext + headless Firefox test runner + CI
+- [ ] **E2E Action Tests** navigate/click/fill/screenshot end-to-end
+- [ ] **Contract Tests** Bridge ↔ Extension message format verification
+- [ ] **Error Yellow Fix** tabGroups catch block updateGroupColor(error)
+
 ## v1.0-pre — Stable API + Compat [ ]
 
 - [ ] supportsAutoLink capability negotiation + backward compatibility matrix
