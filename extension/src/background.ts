@@ -255,10 +255,32 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
 
   onRequestStart();
 
+  // ── v0.5.1 Page Indicator: notify content script ──
+  const indTabId = getNumber(params, "tabId");
+  const indDomain = extractDomainFromParams(params);
+  if (indTabId !== undefined && indTabId !== null) {
+    browser.tabs.sendMessage(indTabId, {
+      action: "__brp_indicator_update__",
+      status: "active",
+      domain: indDomain,
+    }).catch(() => {});
+  }
+
+  const notifyIndicatorIdle = (): void => {
+    if (indTabId !== undefined && indTabId !== null) {
+      browser.tabs.sendMessage(indTabId, {
+        action: "__brp_indicator_update__",
+        status: "idle",
+        domain: indDomain,
+      }).catch(() => {});
+    }
+  };
+
   // ── E2 Domain Blacklist (hard block, no dialog) ──
   const blacklistError = await checkBlacklist(method, params);
   if (blacklistError) {
     sendToBridge({ jsonrpc: "2.0", id, error: blacklistError });
+    notifyIndicatorIdle();
     onRequestEnd(true); // safety block, not a failure
     return;
   }
@@ -267,6 +289,7 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
   const permError = await checkPermission(id, method, params);
   if (permError) {
     sendToBridge({ jsonrpc: "2.0", id, error: permError });
+    notifyIndicatorIdle();
     onRequestEnd(true); // safety block, not a failure
     return;
   }
@@ -338,11 +361,15 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
             data: { errorCode: "BRP_METHOD_NOT_FOUND", retriable: false },
           },
         });
+        notifyIndicatorIdle();
+        onRequestEnd(false); // unknown method
         return;
     }
+    notifyIndicatorIdle();
     onRequestEnd(true);
     sendToBridge({ jsonrpc: "2.0", id, result });
   } catch (error: unknown) {
+    notifyIndicatorIdle();
     onRequestEnd(false);
     sendToBridge({
       jsonrpc: "2.0",
@@ -698,6 +725,17 @@ function isJsonValue(value: unknown): value is JsonValue {
   if (Array.isArray(value)) return value.every(isJsonValue);
   if (isJsonObject(value)) return Object.values(value).every((item) => item === undefined || isJsonValue(item));
   return false;
+}
+
+/** v0.5.1: Extract hostname from params url/uri for page indicator. */
+function extractDomainFromParams(params?: JsonObject): string | undefined {
+  const url = (params?.url || params?.uri) as string | undefined;
+  if (!url) return undefined;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
 }
 
 void connect();
