@@ -568,12 +568,25 @@ async def _handle_token_cli(args) -> int:
     proc.stdin.write(header_bytes + payload)
     await proc.stdin.drain()
 
-    # Read response
+    # Read response (skip notifications until we get the matching response)
+    resp = None
     try:
-        resp_header = await asyncio.wait_for(proc.stdout.readexactly(4), timeout=10.0)
-        resp_len = struct.unpack("<I", resp_header)[0]
-        resp_payload = await proc.stdout.readexactly(resp_len)
-        resp = json.loads(resp_payload.decode("utf-8"))
+        while True:
+            resp_header = await asyncio.wait_for(proc.stdout.readexactly(4), timeout=10.0)
+            resp_len = struct.unpack("<I", resp_header)[0]
+            resp_payload = await proc.stdout.readexactly(resp_len)
+            msg = json.loads(resp_payload.decode("utf-8"))
+
+            # Skip notifications (no "id" field, has "method" starting with "notification/")
+            if "id" not in msg:
+                continue
+
+            # Check if this is the response to our request
+            if msg.get("id") != req_id:
+                continue
+
+            resp = msg
+            break
     except Exception as e:
         print(f"Error: Failed to read response: {e}", file=sys.stderr)
         proc.kill()

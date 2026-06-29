@@ -144,8 +144,7 @@ async fn run_bootstrap() {
         config.tokens_file_path.clone(),
         config.auth_token.clone(),
     ));
-    sanitized_log!(
-        info,
+    log::info!(
         "[Bridge] Master token: {} (use for token.issue/revoke API)",
         config.master_token
     );
@@ -264,8 +263,7 @@ async fn run_bridge() {
         config.tokens_file_path.clone(),
         config.auth_token.clone(),
     ));
-    sanitized_log!(
-        info,
+    log::info!(
         "[Bridge] Master token: {} (use for token.issue/revoke API)",
         config.master_token
     );
