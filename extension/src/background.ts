@@ -18,6 +18,7 @@ import {
 } from "./permissions/flow";
 import { loadConfig } from "./permissions/config";
 import { shouldBlur } from "./screenshot-blur";
+import { addToGroup, removeFromGroup, updateGroupColor } from "./tab-groups";
 import {
   onBridgeConnect, onBridgeDisconnect, onRequestStart, onRequestEnd, updateBadge,
 } from "./status-indicator";
@@ -300,6 +301,12 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
   // ── v0.5.1 Page Indicator: notify content script ──
   const indTabId = getNumber(params, "tabId");
   const indDomain = extractDomainFromParams(params);
+
+  // ── v0.6.0 tabGroups: mark tab as active ──
+  if (indTabId !== undefined && indTabId !== null) {
+    void updateGroupColor(indTabId, "active");
+  }
+
   if (indTabId !== undefined && indTabId !== null) {
     browser.tabs.sendMessage(indTabId, {
       action: "__brp_indicator_update__",
@@ -358,6 +365,7 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
       if (shouldDemoteTab(errorCode, method, demoteTabId, controllableTabs)) {
         controllableTabs.delete(demoteTabId!);
         updateBadge(controllableTabs.size);
+        void removeFromGroup(demoteTabId!);
         browser.tabs.sendMessage(demoteTabId!, {
           action: "__brp_indicator_update__",
           status: "hidden",
@@ -453,6 +461,17 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
     }
     notifyIndicatorIdle();
     onRequestEnd(true);
+
+    // ── v0.6.0 tabGroups: auto-add tab on page.navigate ──
+    if (method === "page.navigate" && indTabId !== undefined && indTabId !== null) {
+      void addToGroup(indTabId);
+    }
+
+    // ── v0.6.0 tabGroups: mark idle after successful request ──
+    if (indTabId !== undefined && indTabId !== null) {
+      void updateGroupColor(indTabId, "idle");
+    }
+
     sendToBridge({ jsonrpc: "2.0", id, result });
   } catch (error: unknown) {
     notifyIndicatorIdle();
@@ -536,7 +555,7 @@ async function handleTabOpen(params?: JsonObject): Promise<JsonObject> {
   if (urlErr) throw new Error(urlErr);
 
   const tab = await browser.tabs.create({ url, active: getBoolean(params, "active") !== false });
-  if (typeof tab.id === "number") { controllableTabs.add(tab.id); updateBadge(controllableTabs.size); }
+  if (typeof tab.id === "number") { controllableTabs.add(tab.id); updateBadge(controllableTabs.size); void addToGroup(tab.id); }
   return { tabId: tab.id, windowId: tab.windowId, url: tab.url };
 }
 
