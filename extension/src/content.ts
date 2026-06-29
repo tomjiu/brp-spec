@@ -95,7 +95,7 @@ function invalidParams(msg: string): ContentError {
 
 // ─── Action Implementations ───
 
-async function doClick(msg: ContentMessage): Promise<ContentResult> {
+export async function doClick(msg: ContentMessage): Promise<ContentResult> {
   const { element: el, matchedType } = findElementWithFallback(
     msg.selector, msg.selectors, msg.nodeId, itree, msg.acceptFallback ?? false,
   );

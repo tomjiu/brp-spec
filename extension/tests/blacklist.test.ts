@@ -22,6 +22,11 @@ describe("extractDomain", () => {
     expect(extractDomain("not-a-url")).toBeNull();
     expect(extractDomain("")).toBeNull();
   });
+
+  it("should extract domain without port", () => {
+    expect(extractDomain("https://example.com:8080/path")).toBe("example.com");
+    expect(extractDomain("http://sub.example.com:443")).toBe("sub.example.com");
+  });
 });
 
 describe("isBlacklisted", () => {
@@ -50,6 +55,17 @@ describe("isBlacklisted", () => {
   });
   it("should handle invalid URL gracefully", () => {
     expect(isBlacklisted("not-a-url", blacklist)).toBe(false);
+  });
+
+  it("should handle URL with port", () => {
+    const bl = ["evil.com"];
+    expect(isBlacklisted("https://evil.com:8080/path", bl)).toBe(true);
+  });
+
+  it("should not block subdomain of exact-match (no wildcard)", () => {
+    const bl = ["evil.com"];
+    expect(isBlacklisted("https://notevil.com", bl)).toBe(false);
+    expect(isBlacklisted("https://sub.evil.com", bl)).toBe(false);
   });
 });
 
