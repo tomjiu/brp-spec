@@ -30,6 +30,12 @@ const blacklistSaveBtn = document.getElementById("blacklist-save-btn") as HTMLBu
 const blacklistClearBtn = document.getElementById("blacklist-clear-btn") as HTMLButtonElement;
 const blacklistStatusEl = document.getElementById("blacklist-status") as HTMLDivElement;
 
+// Domain allowlist elements
+const allowlistEl = document.getElementById("allowlist-domains") as HTMLTextAreaElement;
+const allowlistSaveBtn = document.getElementById("allowlist-save-btn") as HTMLButtonElement;
+const allowlistClearBtn = document.getElementById("allowlist-clear-btn") as HTMLButtonElement;
+const allowlistStatusEl = document.getElementById("allowlist-status") as HTMLDivElement;
+
 // Screenshot blur elements
 const blurGate = document.getElementById("blur-gate") as HTMLSelectElement;
 const blurPassword = document.getElementById("blur-password") as HTMLInputElement;
@@ -146,6 +152,7 @@ async function loadPermissionGates(): Promise<void> {
       sensitiveDomainsEl.value = (config.sensitiveDomains || DEFAULT_DOMAINS).join("\n");
       sensitiveButtonsEl.value = (config.sensitiveButtonPatterns || DEFAULT_BUTTONS).join("\n");
       blacklistEl.value = (config.domainBlacklist || []).join("\n");
+      allowlistEl.value = (config.domainAllowlist || []).join("\n");
       // Load screenshot blur
       const sb = config.screenshotBlur;
       if (sb) {
@@ -191,6 +198,10 @@ permSaveBtn.addEventListener("click", async () => {
         .map((s: string) => s.trim())
         .filter((s: string) => s.length > 0),
       domainBlacklist: blacklistEl.value
+        .split("\n")
+        .map((s: string) => s.trim())
+        .filter((s: string) => s.length > 0),
+      domainAllowlist: allowlistEl.value
         .split("\n")
         .map((s: string) => s.trim())
         .filter((s: string) => s.length > 0),
@@ -298,4 +309,31 @@ blurResetBtn.addEventListener("click", () => {
   blurEmail.checked = false;
   blurSsn.checked = false;
   blurCustom.value = "";
+});
+
+// ─── Domain Allowlist Handlers ───
+
+allowlistSaveBtn.addEventListener("click", async () => {
+  try {
+    const result = await browser.storage.local.get("brpPermissionConfig");
+    const config = result.brpPermissionConfig || {};
+    const patterns = allowlistEl.value
+      .split("\n")
+      .map((s: string) => s.trim())
+      .filter((s: string) => s.length > 0);
+    await browser.storage.local.set({
+      brpPermissionConfig: { ...config, domainAllowlist: patterns },
+    });
+    allowlistStatusEl.textContent = "Allowlist saved.";
+    allowlistStatusEl.className = "status success";
+    setTimeout(() => { allowlistStatusEl.className = "status"; }, 3000);
+  } catch (e: unknown) {
+    allowlistStatusEl.textContent = "Failed: " + (e instanceof Error ? e.message : String(e));
+    allowlistStatusEl.className = "status error";
+    setTimeout(() => { allowlistStatusEl.className = "status"; }, 3000);
+  }
+});
+
+allowlistClearBtn.addEventListener("click", () => {
+  allowlistEl.value = "";
 });
