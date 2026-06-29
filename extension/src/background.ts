@@ -10,6 +10,8 @@ import {
 import { releaseBridge, startBridge } from "./native";
 import type { BridgeMessage, JsonObject, JsonRpcRequest, JsonValue, MessageId } from "./types";
 import { errorMessage, getBoolean, getNumber, getObject, getString, isJsonObject } from "./types";
+import { shouldGate, type PermissionDecision } from "./permissions/checker";
+import { loadConfig, type PermissionGateConfig } from "./permissions/config";
 
 const WS_URL = "ws://127.0.0.1:9817";
 const RECONNECT_BASE_DELAY = 1000;
@@ -20,6 +22,171 @@ let reconnectAttempts = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let authenticated = false;
 const agentTabIds = new Set<number>();
+
+// ─── E1 Permission Gating ───
+
+const PERMISSION_TIMEOUT = 60000; // 60s dialog timeout
+
+interface PendingPermission {
+  resolve: (allowed: boolean) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const pendingPermissions = new Map<string, PendingPermission>();
+let permConfig: PermissionGateConfig | null = null;
+
+async function getPermConfig(): Promise<PermissionGateConfig> {
+  if (!permConfig) permConfig = await loadConfig();
+  return permConfig;
+}
+
+// Reload config when storage changes (e.g. user updated via options page)
+browser.storage.onChanged.addListener((changes) => {
+  if (changes["brpPermissionConfig"]) {
+    permConfig = changes["brpPermissionConfig"].newValue as PermissionGateConfig;
+  }
+});
+
+/**
+ * Check permissions before executing a request.
+ * Returns null if allowed, or a JSON-RPC error object if denied.
+ * If "ask", shows dialog and waits for user response.
+ */
+async function checkPermission(
+  id: MessageId,
+  method: string,
+  params: Record<string, unknown> | undefined,
+): Promise<JsonObject | null> {
+  const config = await getPermConfig();
+  const decision = shouldGate(method, params || {}, config);
+
+  if (decision === "allow") return null;
+
+  if (decision === "deny") {
+    return {
+      code: -32001,
+      message: `Permission denied for action: ${method}`,
+      data: { errorCode: "BRP_PERMISSION_DENIED", retriable: false },
+    };
+  }
+
+  // "ask" — show dialog and await user response
+  const allowed = await requestUserPermission(method, params || {});
+  if (!allowed) {
+    return {
+      code: -32001,
+      message: `User denied permission for: ${method}`,
+      data: { errorCode: "BRP_PERMISSION_DENIED", retriable: false },
+    };
+  }
+  return null;
+}
+
+async function requestUserPermission(
+  method: string,
+  params: Record<string, unknown>,
+): Promise<boolean> {
+  const requestId = `perm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const { title, description, details } = formatPermissionPrompt(method, params);
+
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => {
+      pendingPermissions.delete(requestId);
+      resolve(false); // timeout → auto-deny
+    }, PERMISSION_TIMEOUT);
+
+    pendingPermissions.set(requestId, { resolve, timer });
+
+    // Send dialog message to the most recently active AI-controlled tab
+    sendDialogToActiveTab(requestId, title, description, details).catch(() => {
+      // Failed to show dialog — auto-allow in this case (can't ask user)
+      clearTimeout(timer);
+      pendingPermissions.delete(requestId);
+      resolve(true);
+    });
+  });
+}
+
+async function sendDialogToActiveTab(
+  requestId: string,
+  title: string,
+  description: string,
+  details?: string,
+): Promise<void> {
+  // Find the most recently active AI tab
+  let targetTabId: number | undefined;
+  if (agentTabIds.size > 0) {
+    targetTabId = [...agentTabIds].pop();
+  } else {
+    // Fallback to any active tab
+    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) targetTabId = tab.id;
+  }
+  if (!targetTabId) throw new Error("No active tab for permission dialog");
+
+  await browser.tabs.sendMessage(targetTabId, {
+    action: "__brp_permission_dialog__",
+    requestId,
+    title,
+    description,
+    details,
+  });
+}
+
+function formatPermissionPrompt(method: string, params: Record<string, unknown>): {
+  title: string;
+  description: string;
+  details?: string;
+} {
+  switch (method) {
+    case "script.execute": {
+      const code = (params.code || params.script) as string | undefined;
+      return {
+        title: "AI is attempting to execute a script",
+        description: "This could modify page content or access sensitive data.",
+        ...(code ? { details: code.slice(0, 200) } : {}),
+      };
+    }
+    case "page.navigate": {
+      const url = (params.url || params.uri) as string || "unknown";
+      return {
+        title: "AI is navigating to a sensitive domain",
+        description: "The target URL matches a sensitive domain in your permission settings.",
+        details: url,
+      };
+    }
+    case "element.click": {
+      const selector = params.selector as { value?: unknown } | undefined;
+      const detailValue = selector?.value ? String(selector.value) : undefined;
+      return {
+        title: "AI is attempting to click a sensitive button",
+        description: "The button text matches a sensitive pattern (e.g. payment, delete).",
+        ...(detailValue ? { details: detailValue } : {}),
+      };
+    }
+    default:
+      return {
+        title: `AI requested: ${method}`,
+        description: "This action requires your confirmation.",
+      };
+  }
+}
+
+// Listen for dialog responses from content script
+browser.runtime.onMessage.addListener((msg: unknown) => {
+  if (!isJsonObject(msg)) return;
+  const m = msg as Record<string, unknown>;
+  if (m.action !== "__brp_permission_response__") return;
+
+  const requestId = m.requestId as string;
+  const decision = m.decision as string;
+  const entry = pendingPermissions.get(requestId);
+  if (!entry) return;
+
+  clearTimeout(entry.timer);
+  pendingPermissions.delete(requestId);
+  entry.resolve(decision === "allow");
+});
 
 browser.tabs.onRemoved.addListener((tabId: number): void => {
   agentTabIds.delete(tabId);
@@ -227,6 +394,13 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
   const id = msg.id;
   const method = msg.method;
   const params = msg.params;
+
+  // ── E1 Permission Gating ──
+  const permError = await checkPermission(id, method, params);
+  if (permError) {
+    sendToBridge({ jsonrpc: "2.0", id, error: permError });
+    return;
+  }
 
   try {
     let result: JsonValue;
