@@ -29,6 +29,7 @@ export interface PermissionGateConfig {
   sensitiveDomains: string[];
   sensitiveButtonPatterns: string[];
   domainBlacklist: string[];
+  domainAllowlist: string[];
   screenshotBlur: ScreenshotBlurConfig;
 }
 
@@ -53,6 +54,7 @@ export const DEFAULT_CONFIG: PermissionGateConfig = {
     "删除",
   ],
   domainBlacklist: [],
+  domainAllowlist: [],
   screenshotBlur: {
     gate: "never",
     fieldTypes: ["password", "creditCard", "cvv"],

@@ -10,7 +10,7 @@ import {
 import { releaseBridge, startBridge } from "./native";
 import type { BridgeMessage, JsonObject, JsonRpcRequest, JsonValue, MessageId } from "./types";
 import { errorMessage, getBoolean, getNumber, getObject, getString, isJsonObject } from "./types";
-import { checkBlacklist, checkPermission, registerAgentTabIds, resolvePermission } from "./permissions/flow";
+import { checkAllowlist, checkBlacklist, checkPermission, registerAgentTabIds, resolvePermission } from "./permissions/flow";
 import { loadConfig } from "./permissions/config";
 import { shouldBlur } from "./screenshot-blur";
 import {
@@ -276,22 +276,26 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
     }
   };
 
-  // ── E2 Domain Blacklist (hard block, no dialog) ──
-  const blacklistError = await checkBlacklist(method, params);
-  if (blacklistError) {
-    sendToBridge({ jsonrpc: "2.0", id, error: blacklistError });
-    notifyIndicatorIdle();
-    onRequestEnd(true); // safety block, not a failure
-    return;
-  }
+  // ── v0.5.1 Domain Allowlist (skip E2 + E1 for trusted domains) ──
+  const allowed = await checkAllowlist(method, params);
+  if (!allowed) {
+    // ── E2 Domain Blacklist (hard block, no dialog) ──
+    const blacklistError = await checkBlacklist(method, params);
+    if (blacklistError) {
+      sendToBridge({ jsonrpc: "2.0", id, error: blacklistError });
+      notifyIndicatorIdle();
+      onRequestEnd(true);
+      return;
+    }
 
-  // ── E1 Permission Gating ──
-  const permError = await checkPermission(id, method, params);
-  if (permError) {
-    sendToBridge({ jsonrpc: "2.0", id, error: permError });
-    notifyIndicatorIdle();
-    onRequestEnd(true); // safety block, not a failure
-    return;
+    // ── E1 Permission Gating ──
+    const permError = await checkPermission(id, method, params);
+    if (permError) {
+      sendToBridge({ jsonrpc: "2.0", id, error: permError });
+      notifyIndicatorIdle();
+      onRequestEnd(true);
+      return;
+    }
   }
 
   try {

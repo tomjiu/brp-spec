@@ -144,3 +144,13 @@ export function extractDomain(url: string): string | null {
     return null;
   }
 }
+
+/**
+ * v0.5.1: Check if a URL matches any pattern in the allowlist.
+ * Allowlisted domains skip E2 blacklist and E1 permission gate.
+ * Uses the same wildcard pattern matching as blacklist.
+ */
+export function isAllowlisted(url: string, allowlist: string[]): boolean {
+  if (!url || allowlist.length === 0) return false;
+  return allowlist.some((pattern) => matchDomainPattern(pattern, url));
+}

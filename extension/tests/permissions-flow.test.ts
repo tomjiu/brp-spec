@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { formatPermissionPrompt, checkPermission, checkBlacklist, resolvePermission, registerAgentTabIds } from "../src/permissions/flow";
+import { formatPermissionPrompt, checkPermission, checkAllowlist, checkBlacklist, resolvePermission, registerAgentTabIds } from "../src/permissions/flow";
 import { DEFAULT_CONFIG } from "../src/permissions/config";
 
 // Mutable storage for mocking
@@ -254,3 +254,37 @@ describe("E1/E2 interaction order", () => {
     expect(result?.code).toBe(-32002);
   });
 });
+
+describe("Allowlist/Blacklist interaction", () => {
+  beforeEach(() => {
+    setupBrowserMock();
+    registerAgentTabIds(new Set([1]));
+    storageMock.brpPermissionConfig = {
+      ...DEFAULT_CONFIG,
+      domainAllowlist: ["*.trusted.com"],
+      domainBlacklist: ["*.bank.com"],
+    };
+  });
+
+  it("checkAllowlist returns true for matched page.navigate", async () => {
+    const result = await checkAllowlist("page.navigate", {
+      url: "https://sub.trusted.com/page",
+    });
+    expect(result).toBe(true);
+  });
+
+  it("checkAllowlist returns false for blacklisted but not allowlisted", async () => {
+    const result = await checkAllowlist("page.navigate", {
+      url: "https://login.bank.com",
+    });
+    expect(result).toBe(false);
+  });
+
+  it("checkAllowlist returns false for non-navigate methods", async () => {
+    const result = await checkAllowlist("element.click", {
+      selector: { type: "css", value: "#btn" },
+    });
+    expect(result).toBe(false);
+  });
+});
+

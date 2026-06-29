@@ -7,7 +7,7 @@
  * Separated from background.ts for testability.
  */
 
-import { shouldGate, isBlacklisted } from "./checker";
+import { shouldGate, isAllowlisted, isBlacklisted } from "./checker";
 import { loadConfig, type PermissionGateConfig } from "./config";
 import type { JsonObject, MessageId } from "../types";
 
@@ -125,6 +125,24 @@ async function requestUserPermission(
  * NOTE: Only checks page.navigate here. element.click <a> href check
  * is done in content.ts (where DOM is accessible).
  */
+/**
+ * v0.5.1: Check if URL is in domain allowlist.
+ * Allowlisted URLs skip E2 blacklist and E1 permission gate entirely.
+ * Returns true if URL is allowlisted (skip E1/E2).
+ */
+export async function checkAllowlist(
+  method: string,
+  params: Record<string, unknown> | undefined,
+): Promise<boolean> {
+  if (method !== "page.navigate") return false;
+
+  const url = (params?.url || params?.uri) as string | undefined;
+  if (!url) return false;
+
+  const config = await getPermConfig();
+  return isAllowlisted(url, config.domainAllowlist);
+}
+
 export async function checkBlacklist(
   method: string,
   params: Record<string, unknown> | undefined,
