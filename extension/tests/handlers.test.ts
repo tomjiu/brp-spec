@@ -360,8 +360,8 @@ describe("routeMethod", () => {
     });
   });
 
-  it("covers exactly 23 routes (all methods from the switch statement)", () => {
-    expect(BRP.getKnownMethods().length).toBe(23);
+  it("covers exactly 25 routes (all methods from the switch statement)", () => {
+    expect(BRP.getKnownMethods().length).toBe(25);
   });
 });
 

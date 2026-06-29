@@ -337,3 +337,45 @@ allowlistSaveBtn.addEventListener("click", async () => {
 allowlistClearBtn.addEventListener("click", () => {
   allowlistEl.value = "";
 });
+
+// ─── v0.5.2 History Access ───
+
+const historyStatusEl = document.getElementById("history-status") as HTMLDivElement;
+const historyEnableBtn = document.getElementById("history-enable-btn") as HTMLButtonElement;
+const historyDisableBtn = document.getElementById("history-disable-btn") as HTMLButtonElement;
+
+async function updateHistoryStatus(): Promise<void> {
+  try {
+    const granted = await browser.permissions.contains({ permissions: ["history"] });
+    historyStatusEl.textContent = granted ? "Status: Granted" : "Status: Not granted";
+    historyStatusEl.style.color = granted ? "#22c55e" : "#6b7280";
+    historyEnableBtn.disabled = granted;
+    historyDisableBtn.disabled = !granted;
+  } catch {
+    historyStatusEl.textContent = "Status: Unknown (permissions API error)";
+  }
+}
+
+historyEnableBtn.addEventListener("click", async () => {
+  try {
+    const granted = await browser.permissions.request({ permissions: ["history"] });
+    if (granted) {
+      alert("History access granted. AI can now search and delete browser history.");
+    }
+    await updateHistoryStatus();
+  } catch (e: unknown) {
+    alert("Failed: " + (e instanceof Error ? e.message : String(e)));
+  }
+});
+
+historyDisableBtn.addEventListener("click", async () => {
+  try {
+    await browser.permissions.remove({ permissions: ["history"] });
+    alert("History access revoked.");
+    await updateHistoryStatus();
+  } catch (e: unknown) {
+    alert("Failed: " + (e instanceof Error ? e.message : String(e)));
+  }
+});
+
+updateHistoryStatus();
