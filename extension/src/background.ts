@@ -21,6 +21,16 @@ const WS_URL = "ws://127.0.0.1:9817";
 const RECONNECT_BASE_DELAY = 1000;
 const RECONNECT_MAX_DELAY = 10000;
 
+// ── v0.5.2: Methods that require tab controllable check ──
+const TAB_SCOPED_METHODS: ReadonlySet<string> = new Set([
+  "page.navigate", "page.getInteractionTree", "page.screenshot",
+  "page.goBack", "page.goForward", "page.reload", "page.waitForSelector",
+  "element.click", "element.type", "element.fill", "element.scroll",
+  "element.hover", "element.select", "element.getAttribute",
+  "keyboard.press", "script.execute",
+  "tab.close", "tab.select",
+]);
+
 let ws: WebSocket | null = null;
 let reconnectAttempts = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -276,6 +286,25 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
     }
   };
 
+  // ── v0.5.2 Tab-level Permission Check ──
+  if (TAB_SCOPED_METHODS.has(method)) {
+    const tabCheckId = indTabId ?? (await getActiveTabId());
+    if (tabCheckId !== undefined && tabCheckId !== null && !controllableTabs.has(tabCheckId)) {
+      sendToBridge({ jsonrpc: "2.0", id, error: {
+        code: -32003,
+        message: `Tab ${tabCheckId} is not controllable`,
+        data: {
+          errorCode: "BRP_TAB_NOT_CONTROLLABLE",
+          retriable: false,
+          recoveryHint: "Use tab.setControllable to mark this tab as controllable",
+        },
+      }});
+      notifyIndicatorIdle();
+      onRequestEnd(true);
+      return;
+    }
+  }
+
   // ── v0.5.1 Domain Allowlist (skip E2 + E1 for trusted domains) ──
   const allowed = await checkAllowlist(method, params);
   if (!allowed) {
@@ -292,6 +321,22 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
     const permError = await checkPermission(id, method, params);
     if (permError) {
       sendToBridge({ jsonrpc: "2.0", id, error: permError });
+
+      // v0.5.2: Auto-demote tab on user denial
+      const errorCode = (permError.data as Record<string, unknown> | undefined)?.errorCode;
+      if (errorCode === "BRP_PERMISSION_DENIED" && TAB_SCOPED_METHODS.has(method)) {
+        const demoteTabId = indTabId ?? (await getActiveTabId());
+        if (demoteTabId !== undefined && demoteTabId !== null && controllableTabs.has(demoteTabId)) {
+          controllableTabs.delete(demoteTabId);
+          updateBadge(controllableTabs.size);
+          browser.tabs.sendMessage(demoteTabId, {
+            action: "__brp_indicator_update__",
+            status: "hidden",
+          }).catch(() => {});
+          console.log("[BRP] Tab %d demoted to not-controllable (user denied permission)", demoteTabId);
+        }
+      }
+
       notifyIndicatorIdle();
       onRequestEnd(true);
       return;
@@ -318,6 +363,9 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
         break;
       case "tab.select":
         result = await handleTabSelect(params);
+        break;
+      case "tab.setControllable":
+        result = await handleTabSetControllable(params);
         break;
       case "page.navigate":
         result = await handlePageNavigate(params);
@@ -405,8 +453,30 @@ async function handleTabList(): Promise<JsonObject> {
       url: t.url,
       active: t.active,
       status: t.status,
+      controllable: typeof t.id === "number" ? controllableTabs.has(t.id) : false,
     })),
   };
+}
+
+async function handleTabSetControllable(params?: JsonObject): Promise<JsonObject> {
+  const tabId = getNumber(params, "tabId");
+  if (tabId === undefined) throw new Error("tabId is required");
+  const ctrl = getBoolean(params, "controllable");
+  if (ctrl === undefined) throw new Error("controllable is required");
+
+  if (ctrl) {
+    controllableTabs.add(tabId);
+  } else {
+    controllableTabs.delete(tabId);
+  }
+  updateBadge(controllableTabs.size);
+
+  browser.tabs.sendMessage(tabId, {
+    action: "__brp_indicator_update__",
+    status: ctrl ? "idle" : "hidden",
+  }).catch(() => {});
+
+  return { tabId, controllable: ctrl };
 }
 
 async function handleTabOpen(params?: JsonObject): Promise<JsonObject> {
