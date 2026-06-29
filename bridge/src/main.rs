@@ -21,17 +21,18 @@
 /// Security detail: see SECURITY.md and docs/SECURITY-ARCHITECTURE-DECISIONS.md
 mod auth;
 mod config;
-mod log_sanitizer;
 #[cfg(unix)]
 mod ipc_unix;
 #[cfg(windows)]
 mod ipc_windows;
 mod lockfile;
+mod log_sanitizer;
 mod mode;
 mod native_msg;
 mod protocol;
 mod ratelimit;
 mod router;
+mod token_manager;
 mod transport;
 mod ws_server;
 
@@ -44,6 +45,7 @@ use std::io::Read;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
+use token_manager::TokenManager;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
 #[tokio::main]
@@ -137,7 +139,15 @@ async fn run_bootstrap() {
 
     // ── 2. Start WebSocket server on port 0 (OS-assigned port) ──
     let state = Arc::new(RwLock::new(BridgeState::new()));
-    let auth_token = Arc::new(config.auth_token.clone());
+    let token_manager = Arc::new(TokenManager::new(
+        config.master_token.clone(),
+        config.tokens_file_path.clone(),
+        config.auth_token.clone(),
+    ));
+    log::info!(
+        "[Bridge] Master token: {} (use for token.issue/revoke API)",
+        config.master_token
+    );
     let (notify_tx, _notify_rx) = mpsc::channel::<serde_json::Value>(64);
 
     // Create oneshot channel before spawning WS server
@@ -162,12 +172,12 @@ async fn run_bootstrap() {
         {
             let state = state.clone();
             let notify_tx = notify_tx.clone();
-            let auth_token = auth_token.clone();
+            let token_manager = token_manager.clone();
             let ws_connected_tx = Some(ws_connected_tx);
             tokio::spawn(async move {
                 ws_server::run_ws_server_from_listener(
                     listener,
-                    auth_token,
+                    token_manager,
                     state,
                     notify_tx,
                     ws_connected_tx,
@@ -248,6 +258,15 @@ async fn run_bridge() {
 
     let state = Arc::new(RwLock::new(BridgeState::new()));
     let auth_token = Arc::new(config.auth_token.clone());
+    let token_manager = Arc::new(TokenManager::new(
+        config.master_token.clone(),
+        config.tokens_file_path.clone(),
+        config.auth_token.clone(),
+    ));
+    log::info!(
+        "[Bridge] Master token: {} (use for token.issue/revoke API)",
+        config.master_token
+    );
 
     // ── Channels ──
     let (notify_tx, notify_rx) = mpsc::channel::<serde_json::Value>(64);
@@ -286,18 +305,18 @@ async fn run_bridge() {
 
         let state = state.clone();
         let notify_tx = notify_tx.clone();
-        let auth_token = auth_token.clone();
+        let token_manager = token_manager.clone();
         tokio::spawn(async move {
-            ws_server::run_ws_server_from_listener(listener, auth_token, state, notify_tx, None)
+            ws_server::run_ws_server_from_listener(listener, token_manager, state, notify_tx, None)
                 .await;
         });
     } else {
         let state = state.clone();
         let notify_tx = notify_tx.clone();
         let ws_addr = config.ws_addr.clone();
-        let auth_token = auth_token.clone();
+        let token_manager = token_manager.clone();
         tokio::spawn(async move {
-            ws_server::run_ws_server(&ws_addr, auth_token, state, notify_tx).await;
+            ws_server::run_ws_server(&ws_addr, token_manager, state, notify_tx).await;
         });
     }
 
@@ -334,7 +353,13 @@ async fn run_bridge() {
     let allow_script_execute = config.allow_script_execute;
     while let Some(req) = request_rx.recv().await {
         let state = state.clone();
-        let response = router::handle_request(req, state.clone(), allow_script_execute).await;
+        let response = router::handle_request(
+            req,
+            state.clone(),
+            allow_script_execute,
+            token_manager.clone(),
+        )
+        .await;
 
         if let Ok(resp_value) = serde_json::to_value(&response) {
             if let Err(e) = crate::transport::send_native_message(&resp_value).await {

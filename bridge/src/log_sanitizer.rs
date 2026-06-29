@@ -2,15 +2,27 @@
 //!
 //! Redacts sensitive patterns from log messages.
 
-use std::sync::LazyLock;
 use regex::Regex;
+use std::sync::LazyLock;
 
 static SENSITIVE_PATTERNS: LazyLock<Vec<(Regex, &str)>> = LazyLock::new(|| {
     vec![
-        (Regex::new(r###"(?i)(token\s*[=:]\s*)[^\s&"',}]+"###).unwrap(), "${1}***"),
-        (Regex::new(r###"(?i)(password\s*[=:]\s*)[^\s&"',}]+"###).unwrap(), "${1}***"),
-        (Regex::new(r###"(?i)(authorization\s*:\s*bearer\s+)[^\s"',}]+"###).unwrap(), "${1}***"),
-        (Regex::new(r#"(?i)"((?:auth_?token|secret|api_?key))"\s*:\s*"[^"]*""#).unwrap(), r#""$1": "***""#),
+        (
+            Regex::new(r###"(?i)(token\s*[=:]\s*)[^\s&"',}]+"###).unwrap(),
+            "${1}***",
+        ),
+        (
+            Regex::new(r###"(?i)(password\s*[=:]\s*)[^\s&"',}]+"###).unwrap(),
+            "${1}***",
+        ),
+        (
+            Regex::new(r###"(?i)(authorization\s*:\s*bearer\s+)[^\s"',}]+"###).unwrap(),
+            "${1}***",
+        ),
+        (
+            Regex::new(r#"(?i)"((?:auth_?token|secret|api_?key))"\s*:\s*"[^"]*""#).unwrap(),
+            r#""$1": "***""#,
+        ),
     ]
 });
 

@@ -21,7 +21,12 @@ import argparse
 import logging
 from typing import Optional
 
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP
+    _mcp_available = True
+except ImportError:
+    FastMCP = None  # type: ignore
+    _mcp_available = False
 
 # ── Logging (stderr only — stdout is MCP protocol) ──
 logging.basicConfig(
@@ -205,7 +210,14 @@ async def ensure_initialized():
 
 # ── MCP Server ──
 
-mcp_server = FastMCP("BRP Browser Bridge")
+if _mcp_available:
+    mcp_server = FastMCP("BRP Browser Bridge")
+else:
+    # Dummy for token CLI mode — decorators are no-ops
+    class _DummyMCP:
+        def tool(self):
+            return lambda f: f
+    mcp_server = _DummyMCP()
 
 # Global config (set in main)
 _bridge_path = ""
@@ -500,6 +512,130 @@ def _format_node(node: dict, lines: list, depth: int):
 
 # ── Main ──
 
+async def _handle_token_cli(args) -> int:
+    """Handle --issue-token / --revoke-token CLI commands."""
+    master_token = os.environ.get("BRP_MASTER_TOKEN")
+    if not master_token:
+        print("Error: BRP_MASTER_TOKEN environment variable is required.", file=sys.stderr)
+        return 1
+
+    bridge_path = (
+        args.bridge_path
+        or os.environ.get("BRP_BRIDGE_PATH")
+        or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "bridge", "target", "release", "brp-bridge.exe")
+    )
+    if not os.path.exists(bridge_path):
+        print(f"Error: Bridge binary not found at {bridge_path}", file=sys.stderr)
+        return 1
+
+    ws_addr = args.ws_addr or os.environ.get("BRP_WS_ADDR", "127.0.0.1:9817")
+
+    env = os.environ.copy()
+    # Pass master token to bridge
+    env["BRP_MASTER_TOKEN"] = master_token
+    # Use random port to avoid conflicts
+    env["BRP_WS_ADDR"] = "127.0.0.1:0"
+
+    print(f"Starting bridge for token operation...", file=sys.stderr)
+
+    proc = await asyncio.create_subprocess_exec(
+        bridge_path,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+
+    # Read port/token from first NM message
+    try:
+        header = await asyncio.wait_for(proc.stdout.readexactly(4), timeout=10.0)
+        length = struct.unpack("<I", header)[0]
+        payload = await proc.stdout.readexactly(length)
+        first_msg = json.loads(payload.decode("utf-8"))
+        bridge_port = first_msg.get("port")
+        if not bridge_port:
+            print(f"Error: Bridge did not send port info: {first_msg}", file=sys.stderr)
+            proc.kill()
+            return 1
+    except Exception as e:
+        print(f"Error: Failed to read bridge port: {e}", file=sys.stderr)
+        proc.kill()
+        return 1
+
+    # Send token.issue or token.revoke via NM protocol
+    import uuid
+    req_id = str(uuid.uuid4())
+
+    if args.issue_token:
+        method = "token.issue"
+        params = {"masterToken": master_token}
+    else:
+        method = "token.revoke"
+        params = {"masterToken": master_token, "token": args.revoke_token}
+
+    msg = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
+    payload = json.dumps(msg).encode("utf-8")
+    header_bytes = struct.pack("<I", len(payload))
+    proc.stdin.write(header_bytes + payload)
+    await proc.stdin.drain()
+
+    # Read response (skip notifications until we get the matching response)
+    resp = None
+    try:
+        while True:
+            resp_header = await asyncio.wait_for(proc.stdout.readexactly(4), timeout=10.0)
+            resp_len = struct.unpack("<I", resp_header)[0]
+            resp_payload = await proc.stdout.readexactly(resp_len)
+            msg = json.loads(resp_payload.decode("utf-8"))
+
+            # Skip notifications (no "id" field, has "method" starting with "notification/")
+            if "id" not in msg:
+                continue
+
+            # Check if this is the response to our request
+            if msg.get("id") != req_id:
+                continue
+
+            resp = msg
+            break
+    except Exception as e:
+        print(f"Error: Failed to read response: {e}", file=sys.stderr)
+        proc.kill()
+        return 1
+
+    if "error" in resp:
+        err = resp["error"]
+        print(f"Error: {err.get('message', err)}", file=sys.stderr)
+        proc.kill()
+        return 1
+
+    if args.issue_token:
+        token = resp.get("result", {}).get("token")
+        if token:
+            print(token)
+        else:
+            print("Error: No token in response", file=sys.stderr)
+            proc.kill()
+            return 1
+    else:
+        revoked = resp.get("result", {}).get("revoked")
+        if revoked:
+            print(f"Token revoked: {args.revoke_token}")
+        else:
+            print("Error: Token not revoked", file=sys.stderr)
+            proc.kill()
+            return 1
+
+    # Cleanup
+    try:
+        proc.stdin.close()
+    except Exception:
+        pass
+    proc.kill()
+    await proc.wait()
+    return 0
+
 def main():
     global _bridge_path, _ws_addr
 
@@ -508,7 +644,15 @@ def main():
                         help="Path to brp-bridge binary (overrides BRP_BRIDGE_PATH env)")
     parser.add_argument("--ws-addr", default=None,
                         help="Bridge WebSocket address (overrides BRP_WS_ADDR env)")
+    parser.add_argument("--issue-token", action="store_true",
+                        help="Issue a new client token using master token, then exit")
+    parser.add_argument("--revoke-token", metavar="TOKEN",
+                        help="Revoke a client token using master token, then exit")
     args = parser.parse_args()
+
+    # ── B2 Token Management CLI ──
+    if args.issue_token or args.revoke_token:
+        sys.exit(asyncio.run(_handle_token_cli(args)))
 
     _bridge_path = (
         args.bridge_path
@@ -526,6 +670,10 @@ def main():
     log.info("BRP MCP Adapter starting")
     log.info("  Bridge: %s", _bridge_path)
     log.info("  WS addr: %s", _ws_addr)
+
+    if not _mcp_available:
+        log.error("mcp SDK not installed. Install with: pip install mcp")
+        sys.exit(1)
 
     mcp_server.run(transport="stdio")
 
