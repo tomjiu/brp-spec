@@ -17,6 +17,7 @@ import { showPermissionDialog, removeExistingDialog } from "./permissions/dialog
 import { isBlacklisted, extractDomain } from "./permissions/checker";
 import { loadConfig } from "./permissions/config";
 import { applyBlur } from "./screenshot-blur";
+import { updateIndicator } from "./page-indicator";
 import type { ScreenshotBlurConfig } from "./permissions/config";
 import type { ITreeAPI } from "./types.content";
 import {
@@ -465,6 +466,14 @@ async function handleScreenshotBlurAsk(msg: Record<string, unknown>): Promise<Co
   return { success: true, value: decision };
 }
 
+function handleIndicatorUpdate(msg: Record<string, unknown>): ContentResult {
+  updateIndicator(
+    (msg.status as "active" | "idle" | "hidden") || "hidden",
+    msg.domain as string | undefined,
+  );
+  return { success: true, value: null };
+}
+
 // ─── Content Script Entry Point ───
 
 /**
@@ -550,6 +559,9 @@ browser.runtime.onMessage.addListener(
 
         case "__brp_screenshot_blur_ask__":
           return await handleScreenshotBlurAsk(msg as Record<string, unknown>);
+
+        case "__brp_indicator_update__":
+          return handleIndicatorUpdate(msg as Record<string, unknown>);
 
         default:
           return { error: `Unknown action: ${contentMsg.action}` };
