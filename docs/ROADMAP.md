@@ -95,12 +95,24 @@
 - [ ] **D1** web-ext + headless Firefox: full flow (connect → navigate → ITree → click)
 - [ ] Fixed test pages (local SPA), retry mechanism
 
-## v0.5.0 — Defense in Depth [ ]
+## v0.5.0 — Defense in Depth [x]
 
-- [ ] **E1** Permission gating (confirm dialogs for navigation, form submit, script.execute)
-- [ ] **E2** Domain blacklist (user-configurable, wildcard support)
-- [ ] **E5** Screenshot permission gate, log sanitization, CSP hardening
-- [ ] **B2** Multi-token (per-client tokens, independent revocation)
+- [x] **E1** Permission gating (confirm dialogs for navigation, form submit, script.execute)
+- [x] **E2** Domain blacklist (user-configurable, wildcard support)
+- [x] **E5** Screenshot permission gate, log sanitization, CSP hardening
+- [x] **B2** Multi-token (per-client tokens, independent revocation)
+
+## v0.5.1 — User Trust: Visibility + Control [~]
+
+- [ ] **Status Icon** Extension toolbar icon: 4 states (disconnected/idle/active/error) + badge
+- [ ] **Page Indicator** Content script floating status bar on each page
+- [ ] **Domain Allowlist** Skip E1 ask for trusted domains, allowlist takes priority over blacklist
+
+## v0.5.2 — Tab-level Permissions + tabGroups [ ]
+
+- [ ] Protected tabs (user-controlled controllable state)
+- [ ] tabGroups coloring (Firefox v139+, Zen real-machine verify)
+- [ ] Browser history access (optional permission)
 
 ## v1.0-pre — Stable API + Compat [ ]
 
