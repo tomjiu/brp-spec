@@ -79,16 +79,28 @@
 - [x] **E4** Context Recovery Pipeline (selector fallback chain)
 - [x] **PR #27** Bridge Mode Random Port Support
 - [x] **PR #26** TS Migration Cleanup (JS → TS)
-- [ ] **E4** Context Recovery Pipeline (selector fallback chain, acceptFallback opt-in)
 
-## v0.4.2 — Multi-Instance [ ]
+## v0.4.2 — Multi-Instance [~] Deferred
 
-- [ ] MRU multi-instance reuse (currently each extension starts its own bridge)
+> Deferred to v1.0 candidate phase. Code still evolving (v0.5.0 changes core behavior).
+> B1 auto-link not CI-testable (Firefox headless limitation). Manual testing for B1.
 
-## v0.4.x — Real Extension Integration Tests [ ]
+- [ ] MRU multi-instance reuse
+- [ ] Real Extension Integration Tests (web-ext + headless Firefox)
+
+## v0.4.x — Real Extension Integration Tests [~] Deferred
+
+> Merged into v0.4.2 deferred. Will be added in v1.0 candidate phase.
 
 - [ ] **D1** web-ext + headless Firefox: full flow (connect → navigate → ITree → click)
 - [ ] Fixed test pages (local SPA), retry mechanism
+
+## v0.5.0 — Defense in Depth [ ]
+
+- [ ] **E1** Permission gating (confirm dialogs for navigation, form submit, script.execute)
+- [ ] **E2** Domain blacklist (user-configurable, wildcard support)
+- [ ] **E5** Screenshot permission gate, log sanitization, CSP hardening
+- [ ] **B2** Multi-token (per-client tokens, independent revocation)
 
 ## v1.0-pre — Stable API + Compat [ ]
 
