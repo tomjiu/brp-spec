@@ -117,6 +117,12 @@
 - [x] **Popup UI** Extension popup lists all tabs with controllable toggle
 - [x] **History Access** Optional `history` permission + `history.search`/`history.delete` methods
 
+## v0.6.0 — Tech Debt + tabGroups (Experimental) [~]
+
+- [ ] **ts-rs Type Alignment** Bridge struct → auto-generated TS type, extension uses generated
+- [ ] **tabGroups Coloring** (Experimental) Firefox v139+ tab group colors with page-indicator fallback
+- [ ] **Fallback Detection** `!browser.tabGroups` → silent fallback to page-indicator
+
 ## v1.0-pre — Stable API + Compat [ ]
 
 - [ ] supportsAutoLink capability negotiation + backward compatibility matrix

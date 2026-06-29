@@ -27,8 +27,16 @@ export interface ContentMessage {
   acceptFallback?: boolean; // E4: enable fallback selector chain
 }
 
-// ─── Precondition (E3) ───
+// ─── Precondition (E3) — v0.6.0 aligned with ts-rs generated ───
 
+import type { Precondition as GeneratedPrecondition } from "./generated/Precondition";
+export type { GeneratedPrecondition };
+
+/**
+ * DOM precondition for element validation.
+ * Aligned with bridge/bindings/Precondition.ts (ts-rs generated).
+ * Wraps generated `T | null` to optional `T?` for extension ergonomics.
+ */
 export interface Precondition {
   tagName?: string;
   textContains?: string;

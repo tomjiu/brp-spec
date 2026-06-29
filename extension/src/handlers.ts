@@ -5,7 +5,7 @@
  * browser.* dependencies.
  */
 import type {
-  InitializeResult,
+  GeneratedInitializeResult,
   JsonObject,
   MethodRoute,
   NavigationDecision,
@@ -147,7 +147,7 @@ export function getKnownMethods(): string[] {
   return Object.keys(METHOD_ROUTES);
 }
 
-export function handleInitialize(params?: JsonObject): InitializeResult {
+export function handleInitialize(params?: JsonObject): GeneratedInitializeResult {
   const testSeed = params?._testSeed;
   const protocolVersion = params?.protocolVersion;
   return {
@@ -184,6 +184,7 @@ export function handleInitialize(params?: JsonObject): InitializeResult {
       ],
       treeDeltaSupported: false,
       multiSession: false,
+      maxRequestSize: null,
     },
   };
 }

@@ -60,6 +60,14 @@ jobs:
       - name: Run tests
         run: cargo test
 
+      - name: Verify no binding drift
+        shell: bash
+        run: |
+          git diff --exit-code -- bindings/ || (
+            echo "::error::Rust types changed but bindings/ not committed. Run: cargo test"
+            exit 1
+          )
+
       - name: Install cargo-audit
         if: matrix.os == 'ubuntu-latest'
         uses: taiki-e/install-action@v2
@@ -104,6 +112,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Copy generated types
+        run: npm run prebuild
 
       - name: Run typecheck
         run: npm run typecheck

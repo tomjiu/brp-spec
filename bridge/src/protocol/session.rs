@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export, export_to = "../bindings/")]
+#[ts(export, export_to = "../bindings/", rename_all = "snake_case")]
 pub enum SessionState {
     Disconnected,
     Connecting,
