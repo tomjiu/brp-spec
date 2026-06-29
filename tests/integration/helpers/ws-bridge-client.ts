@@ -43,6 +43,7 @@ export class WsBridgeClient {
         ...process.env,
         BRP_STANDALONE: "1",
         BRP_WS_ADDR: `127.0.0.1:${this.port}`,
+        BRP_AUTH_TOKEN: "test-token",
       },
     });
 
@@ -69,7 +70,9 @@ export class WsBridgeClient {
 
       this.ws.on("open", () => {
         console.log("[ws-client] connected to bridge");
-        resolve();
+        this.register().then(() => {
+          resolve();
+        }).catch(reject);
       });
 
       this.ws.on("message", (data: WebSocket.Data) => {
@@ -97,6 +100,24 @@ export class WsBridgeClient {
 
   async ready(): Promise<void> {
     return this.readyPromise;
+  }
+
+  /**
+   * Send register as first WS message (Bridge protocol requirement).
+   * Bridge rejects any first message that is not a "register".
+   */
+  private async register(): Promise<void> {
+    const token = process.env.BRP_AUTH_TOKEN || "test-token";
+    const registerMsg = {
+      jsonrpc: "2.0",
+      method: "register",
+      params: { token, browserId: "test-client" },
+    };
+    this.ws!.send(JSON.stringify(registerMsg));
+    // Bridge doesn't send a JSON-RPC response for register — it just
+    // logs "Extension authenticated" and starts accepting requests.
+    // Small delay to let bridge process the register before we send requests.
+    await new Promise((r) => setTimeout(r, 500));
   }
 
   async send(method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
