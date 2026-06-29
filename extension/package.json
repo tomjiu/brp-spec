@@ -5,6 +5,8 @@
   "description": "BRP Firefox Extension",
   "scripts": {
     "prebuild": "node scripts/copy-generated-types.mjs",
+    "pretest": "node scripts/copy-generated-types.mjs",
+    "pretypecheck": "node scripts/copy-generated-types.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.content.json",
     "typecheck:bg": "tsc --noEmit",
     "typecheck:content": "tsc --noEmit -p tsconfig.content.json",
