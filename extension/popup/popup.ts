@@ -73,11 +73,10 @@ async function toggleControllable(
   toggleBtn: HTMLButtonElement,
 ): Promise<void> {
   try {
-    // Set via tab.setControllable (reuses the existing method)
     await browser.runtime.sendMessage({
-      jsonrpc: "2.0",
-      method: "tab.setControllable",
-      params: { tabId, controllable: makeControllable },
+      action: "__brp_set_controllable__",
+      tabId,
+      controllable: makeControllable,
     });
     // Update button style
     toggleBtn.className = `toggle ${makeControllable ? "on" : "off"}`;
