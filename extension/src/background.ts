@@ -476,6 +476,12 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
   } catch (error: unknown) {
     notifyIndicatorIdle();
     onRequestEnd(false);
+
+    // ── v0.7.0: Error yellow for tabGroups (v0.6.0 leftover) ──
+    if (indTabId !== undefined && indTabId !== null) {
+      void updateGroupColor(indTabId, "error");
+    }
+
     sendToBridge({
       jsonrpc: "2.0",
       id,
