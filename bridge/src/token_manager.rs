@@ -16,8 +16,12 @@ pub struct TokenManager {
 }
 
 impl TokenManager {
-    pub fn new(master_token: String, tokens_file: std::path::PathBuf, legacy_token: String) -> Self {
-        let mut manager = Self {
+    pub fn new(
+        master_token: String,
+        tokens_file: std::path::PathBuf,
+        legacy_token: String,
+    ) -> Self {
+        let manager = Self {
             master_token,
             client_tokens: RwLock::new(HashSet::new()),
             tokens_file,
@@ -27,7 +31,10 @@ impl TokenManager {
         if let Ok(content) = std::fs::read_to_string(&manager.tokens_file) {
             if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
                 if let Some(clients) = data.get("clients").and_then(|c| c.as_array()) {
-                    let mut tokens = manager.client_tokens.try_write().unwrap();
+                    let mut tokens = manager
+                        .client_tokens
+                        .try_write()
+                        .expect("RwLock uncontended in constructor");
                     for token in clients {
                         if let Some(t) = token.as_str() {
                             tokens.insert(t.to_string());
@@ -53,10 +60,8 @@ impl TokenManager {
         }
         let tmp_path = self.tokens_file.with_extension("tmp");
         if let Ok(mut f) = tokio::fs::File::create(&tmp_path).await {
-            if f.write_all(content.as_bytes()).await.is_ok() {
-                if f.sync_all().await.is_ok() {
-                    let _ = tokio::fs::rename(&tmp_path, &self.tokens_file).await;
-                }
+            if f.write_all(content.as_bytes()).await.is_ok() && f.sync_all().await.is_ok() {
+                let _ = tokio::fs::rename(&tmp_path, &self.tokens_file).await;
             }
             let _ = tokio::fs::remove_file(&tmp_path).await;
         }
@@ -64,7 +69,8 @@ impl TokenManager {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&self.tokens_file, std::fs::Permissions::from_mode(0o600));
+            let _ =
+                std::fs::set_permissions(&self.tokens_file, std::fs::Permissions::from_mode(0o600));
         }
     }
 
@@ -99,7 +105,11 @@ impl TokenManager {
     }
 
     /// Revoke a client token. Requires master token.
-    pub async fn revoke_token(&self, requester_token: &str, token_to_revoke: &str) -> Result<(), &'static str> {
+    pub async fn revoke_token(
+        &self,
+        requester_token: &str,
+        token_to_revoke: &str,
+    ) -> Result<(), &'static str> {
         if !crate::auth::secure_compare(requester_token, &self.master_token) {
             return Err("Master token required to revoke tokens");
         }
@@ -173,13 +183,19 @@ mod tests {
     #[tokio::test]
     async fn test_cannot_revoke_master() {
         let (m, _t) = make_manager();
-        assert!(m.revoke_token("mt_test_master", "mt_test_master").await.is_err());
+        assert!(m
+            .revoke_token("mt_test_master", "mt_test_master")
+            .await
+            .is_err());
     }
 
     #[tokio::test]
     async fn test_revoke_nonexistent() {
         let (m, _t) = make_manager();
-        assert!(m.revoke_token("mt_test_master", "ct_nonexistent").await.is_err());
+        assert!(m
+            .revoke_token("mt_test_master", "ct_nonexistent")
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -203,7 +219,11 @@ mod tests {
     async fn test_persist_across_restart() {
         let (m, tmp) = make_manager();
         let ct = m.issue_token("mt_test_master").await.unwrap();
-        let m2 = TokenManager::new("mt_test_master".to_string(), tmp.path().join("tokens.json"), String::new());
+        let m2 = TokenManager::new(
+            "mt_test_master".to_string(),
+            tmp.path().join("tokens.json"),
+            String::new(),
+        );
         assert!(m2.is_valid_token(&ct).await);
     }
 

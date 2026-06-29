@@ -10,9 +10,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use crate::auth::{
-    validate_json_depth, OriginValidator, MAX_JSON_DEPTH, MAX_MESSAGE_SIZE,
-};
+use crate::auth::{validate_json_depth, OriginValidator, MAX_JSON_DEPTH, MAX_MESSAGE_SIZE};
 use crate::protocol::*;
 use crate::ratelimit::RateLimiter;
 use crate::router::BridgeState;
@@ -108,8 +106,15 @@ async fn run_accept_loop(
                 let rate_limiter = rate_limiter.clone();
 
                 tokio::spawn(async move {
-                    handle_ws_connection(stream, peer, token_manager, state, notify_tx, rate_limiter)
-                        .await;
+                    handle_ws_connection(
+                        stream,
+                        peer,
+                        token_manager,
+                        state,
+                        notify_tx,
+                        rate_limiter,
+                    )
+                    .await;
                 });
             }
             Err(e) => {
@@ -135,13 +140,18 @@ async fn handle_ws_connection(
             let (mut tx, mut receiver) = ws_stream.split();
 
             // Wait for registration message (10s timeout)
-            let browser_id =
-                match register_extension(&mut receiver, &mut tx, &token_manager, &rate_limiter, peer)
-                    .await
-                {
-                    Some(id) => id,
-                    None => return,
-                };
+            let browser_id = match register_extension(
+                &mut receiver,
+                &mut tx,
+                &token_manager,
+                &rate_limiter,
+                peer,
+            )
+            .await
+            {
+                Some(id) => id,
+                None => return,
+            };
 
             let ext_sender = Arc::new(Mutex::new(tx));
 

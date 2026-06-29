@@ -83,45 +83,68 @@ pub async fn handle_request(
     match method.as_str() {
         // ── B2 Token Management (handled locally, requires master token) ──
         "token.issue" => {
-            let requester = req.params.as_ref()
+            let requester = req
+                .params
+                .as_ref()
                 .and_then(|p| p.get("masterToken").and_then(|v| v.as_str()))
                 .unwrap_or("");
             match token_manager.issue_token(requester).await {
                 Ok(new_token) => Response::success(id, json!({"token": new_token})),
-                Err(e) => Response::error(id, ErrorResponse {
-                    code: -32001,
-                    message: e.into(),
-                    data: Some(json!({"errorCode": "BRP_MASTER_TOKEN_REQUIRED", "retriable": false})),
-                }),
+                Err(e) => Response::error(
+                    id,
+                    ErrorResponse {
+                        code: -32001,
+                        message: e.into(),
+                        data: Some(
+                            json!({"errorCode": "BRP_MASTER_TOKEN_REQUIRED", "retriable": false}),
+                        ),
+                    },
+                ),
             }
         }
         "token.revoke" => {
-            let requester = req.params.as_ref()
+            let requester = req
+                .params
+                .as_ref()
                 .and_then(|p| p.get("masterToken").and_then(|v| v.as_str()))
                 .unwrap_or("");
-            let target = req.params.as_ref()
+            let target = req
+                .params
+                .as_ref()
                 .and_then(|p| p.get("token").and_then(|v| v.as_str()))
                 .unwrap_or("");
             match token_manager.revoke_token(requester, target).await {
                 Ok(()) => Response::success(id, json!({"revoked": true})),
-                Err(e) => Response::error(id, ErrorResponse {
-                    code: -32001,
-                    message: e.into(),
-                    data: Some(json!({"errorCode": if e.contains("Master token") { "BRP_MASTER_TOKEN_REQUIRED" } else { "BRP_TOKEN_REVOKE_FAILED" }, "retriable": false})),
-                }),
+                Err(e) => Response::error(
+                    id,
+                    ErrorResponse {
+                        code: -32001,
+                        message: e.into(),
+                        data: Some(
+                            json!({"errorCode": if e.contains("Master token") { "BRP_MASTER_TOKEN_REQUIRED" } else { "BRP_TOKEN_REVOKE_FAILED" }, "retriable": false}),
+                        ),
+                    },
+                ),
             }
         }
         "token.list" => {
-            let requester = req.params.as_ref()
+            let requester = req
+                .params
+                .as_ref()
                 .and_then(|p| p.get("masterToken").and_then(|v| v.as_str()))
                 .unwrap_or("");
             match token_manager.list_tokens(requester).await {
                 Ok(tokens) => Response::success(id, json!({"tokens": tokens})),
-                Err(e) => Response::error(id, ErrorResponse {
-                    code: -32001,
-                    message: e.into(),
-                    data: Some(json!({"errorCode": "BRP_MASTER_TOKEN_REQUIRED", "retriable": false})),
-                }),
+                Err(e) => Response::error(
+                    id,
+                    ErrorResponse {
+                        code: -32001,
+                        message: e.into(),
+                        data: Some(
+                            json!({"errorCode": "BRP_MASTER_TOKEN_REQUIRED", "retriable": false}),
+                        ),
+                    },
+                ),
             }
         }
 

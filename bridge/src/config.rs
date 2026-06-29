@@ -131,7 +131,9 @@ fn default_tokens_file_path() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         if let Ok(appdata) = std::env::var("APPDATA") {
-            return PathBuf::from(appdata).join("brp-bridge").join("tokens.json");
+            return PathBuf::from(appdata)
+                .join("brp-bridge")
+                .join("tokens.json");
         }
     }
     if let Ok(home) = std::env::var("HOME") {
