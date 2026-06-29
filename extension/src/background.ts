@@ -10,7 +10,7 @@ import {
 import { releaseBridge, startBridge } from "./native";
 import type { BridgeMessage, JsonObject, JsonRpcRequest, JsonValue, MessageId } from "./types";
 import { errorMessage, getBoolean, getNumber, getObject, getString, isJsonObject } from "./types";
-import { checkPermission, resolvePermission } from "./permissions/flow";
+import { checkPermission, registerAgentTabIds, resolvePermission } from "./permissions/flow";
 
 const WS_URL = "ws://127.0.0.1:9817";
 const RECONNECT_BASE_DELAY = 1000;
@@ -21,6 +21,9 @@ let reconnectAttempts = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let authenticated = false;
 const agentTabIds = new Set<number>();
+
+// Register agent tab IDs for permission dialog tab selection
+registerAgentTabIds(agentTabIds);
 
 // ─── E1 Permission Gating ───
 
