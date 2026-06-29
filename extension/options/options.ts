@@ -155,7 +155,6 @@ permSaveBtn.addEventListener("click", async () => {
         .split("\n")
         .map((s: string) => s.trim())
         .filter((s: string) => s.length > 0),
-      _autoApprovePermissions: false,
     };
     await browser.storage.local.set({ brpPermissionConfig: config });
     permStatusEl.textContent = "Permission gates saved.";

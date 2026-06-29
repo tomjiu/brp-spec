@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import { shouldGate, matchDomainPattern } from "../src/permissions/checker";
 import { DEFAULT_CONFIG, type PermissionGateConfig } from "../src/permissions/config";
 
-const defaultConfig = { ...DEFAULT_CONFIG, _autoApprovePermissions: false };
+const defaultConfig = { ...DEFAULT_CONFIG };
 
 describe("matchDomainPattern", () => {
   it("should match exact domain", () => {
@@ -120,12 +120,4 @@ describe("shouldGate", () => {
     });
   });
 
-  describe("_autoApprovePermissions", () => {
-    it("should allow everything when flag is set", () => {
-      const config = { ...defaultConfig, _autoApprovePermissions: true };
-      expect(shouldGate("script.execute", {}, config)).toBe("allow");
-      expect(shouldGate("page.navigate", { url: "https://www.bank.com" }, config)).toBe("allow");
-      expect(shouldGate("element.click", { selector: { type: "text", value: "delete" } }, config)).toBe("allow");
-    });
-  });
 });

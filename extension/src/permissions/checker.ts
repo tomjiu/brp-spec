@@ -54,8 +54,6 @@ export function shouldGate(
   config: PermissionGateConfig,
 ): PermissionDecision {
   // CI/testing bypass
-  if (config._autoApprovePermissions) return "allow";
-
   // ── script.execute ──
   if (method === "script.execute") {
     return gateToDecision(config.permissionGates.scriptExecute);
@@ -98,6 +96,10 @@ function isSensitiveClick(
   params: Record<string, unknown>,
   patterns: string[],
 ): boolean {
+  // NOTE: v0.5.0 only scans AI-provided selector.value, not actual button text.
+  // False negatives possible if AI uses generic selector (e.g. "#submit-btn")
+  // to click a sensitive button. v0.5.x will add button text inspection
+  // (requires background to query element text before asking).
   // Check selector values
   const selector = params.selector as { type?: string; value?: unknown } | undefined;
   if (selector?.value && typeof selector.value === "string") {

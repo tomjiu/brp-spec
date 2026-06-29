@@ -13,7 +13,7 @@ import type {
 } from "./types.content";
 import { validatePrecondition } from "./precondition";
 import { findElementWithFallback } from "./selector-fallback";
-import { showPermissionDialog } from "./permissions/dialog";
+import { showPermissionDialog, removeExistingDialog } from "./permissions/dialog";
 import type { ITreeAPI } from "./types.content";
 import {
   isHTMLElement,
@@ -487,6 +487,10 @@ browser.runtime.onMessage.addListener(
 
         case "__brp_permission_dialog__":
           return await handlePermissionDialog(msg as Record<string, unknown>);
+
+        case "__brp_permission_dialog_close__":
+          removeExistingDialog();
+          return { success: true, value: null };
 
         default:
           return { error: `Unknown action: ${contentMsg.action}` };

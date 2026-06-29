@@ -15,8 +15,6 @@ export interface PermissionGateConfig {
   };
   sensitiveDomains: string[];
   sensitiveButtonPatterns: string[];
-  /** Internal flag for CI/testing — auto-approves all "ask" decisions */
-  _autoApprovePermissions: boolean;
 }
 
 export const DEFAULT_CONFIG: PermissionGateConfig = {
@@ -39,20 +37,27 @@ export const DEFAULT_CONFIG: PermissionGateConfig = {
     "提交订单",
     "删除",
   ],
-  _autoApprovePermissions: false,
 };
 
 const STORAGE_KEY = "brpPermissionConfig";
 
 /**
- * Load permission config from storage, falling back to defaults.
+ * Load permission config from storage, deep-merging with defaults
+ * so newly added keys are always present.
  */
 export async function loadConfig(): Promise<PermissionGateConfig> {
   try {
     const result = await browser.storage.local.get(STORAGE_KEY);
-    if (result[STORAGE_KEY]) {
-      // Merge with defaults to handle newly added keys
-      return { ...DEFAULT_CONFIG, ...result[STORAGE_KEY] };
+    const stored = result[STORAGE_KEY] as Partial<PermissionGateConfig> | undefined;
+    if (stored) {
+      return {
+        ...DEFAULT_CONFIG,
+        ...stored,
+        permissionGates: {
+          ...DEFAULT_CONFIG.permissionGates,
+          ...(stored.permissionGates ?? {}),
+        },
+      };
     }
   } catch {
     // storage.local unavailable (e.g. content script context)

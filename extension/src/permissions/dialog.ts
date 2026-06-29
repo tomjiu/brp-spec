@@ -37,7 +37,7 @@ export function showPermissionDialog(req: DialogRequest): Promise<"allow" | "den
   });
 }
 
-function removeExistingDialog(): void {
+export function removeExistingDialog(): void {
   document.getElementById(DIALOG_ID)?.remove();
   document.getElementById(OVERLAY_ID)?.remove();
 }
