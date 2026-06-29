@@ -14,6 +14,7 @@ import {
   checkAllowlist, checkBlacklist, checkPermission,
   checkTabControllable, shouldDemoteTab, TAB_SCOPED_METHODS,
   registerControllableTabs, resolvePermission,
+  checkHistoryAccessError, formatHistoryResults,
 } from "./permissions/flow";
 import { loadConfig } from "./permissions/config";
 import { shouldBlur } from "./screenshot-blur";
@@ -430,6 +431,12 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
       case "script.execute":
         result = await handleScriptExecute(params);
         break;
+      case "history.search":
+        result = await handleHistorySearch(params);
+        break;
+      case "history.delete":
+        result = await handleHistoryDelete(params);
+        break;
       default:
         sendToBridge({
           jsonrpc: "2.0",
@@ -751,6 +758,43 @@ async function handleScriptExecute(params?: JsonObject): Promise<JsonValue> {
   if (code.length > 1048576) throw new Error("Script code too large (max 1MB)");
 
   return sendToContentScript(tabId, { action: "executeScript", code });
+}
+
+// ─── v0.5.2 History Access ───
+
+async function checkHistoryPermission(): Promise<void> {
+  const granted = await browser.permissions.contains({ permissions: ["history"] });
+  const error = checkHistoryAccessError(granted);
+  if (error) {
+    throw Object.assign(new Error(String(error.message)), error);
+  }
+}
+
+async function handleHistorySearch(params?: JsonObject): Promise<JsonObject> {
+  await checkHistoryPermission();
+  const text = getString(params, "text") ?? "";
+  const startTime = getNumber(params, "startTime");
+  const endTime = getNumber(params, "endTime");
+  const maxResults = getNumber(params, "maxResults") ?? 100;
+
+  const query: browser.history._SearchQuery = { text, maxResults };
+  if (startTime !== undefined && startTime !== null) query.startTime = startTime;
+  if (endTime !== undefined && endTime !== null) query.endTime = endTime;
+
+  const items = await browser.history.search(query);
+  return {
+    items: formatHistoryResults(items),
+    count: items.length,
+  };
+}
+
+async function handleHistoryDelete(params?: JsonObject): Promise<JsonObject> {
+  await checkHistoryPermission();
+  const url = getString(params, "url");
+  if (!url) throw new Error("url is required");
+
+  await browser.history.deleteUrl({ url });
+  return { deleted: url };
 }
 
 async function getActiveTabId(): Promise<number> {

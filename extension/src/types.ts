@@ -60,7 +60,9 @@ export type DirectHandlerName =
   | "handleGoBack"
   | "handleGoForward"
   | "handleReload"
-  | "handleScriptExecute";
+  | "handleScriptExecute"
+  | "handleHistorySearch"
+  | "handleHistoryDelete";
 
 export type ElementAction =
   | "click"

@@ -11,6 +11,7 @@
     "nativeMessaging",
     "<all_urls>"
   ],
+  "optional_permissions": ["history"],
   "background": {
     "scripts": [
       "dist/handlers.js",

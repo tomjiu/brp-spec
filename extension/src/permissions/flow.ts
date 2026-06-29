@@ -297,3 +297,30 @@ export function shouldDemoteTab(
   if (tabId === null || tabId === undefined) return false;
   return controllableTabs.has(tabId);
 }
+
+// ─── v0.5.2 History Access ───
+
+export function checkHistoryAccessError(permissionGranted: boolean): JsonObject | null {
+  if (permissionGranted) return null;
+  return {
+    code: -32004,
+    message: "History access not granted. Enable in extension options.",
+    data: {
+      errorCode: "BRP_HISTORY_PERMISSION_NOT_GRANTED",
+      retriable: false,
+      recoveryHint: "Enable history access in BRP Bridge extension options",
+    },
+  };
+}
+
+export function formatHistoryResults(
+  items: Array<{ id?: string | undefined; url?: string | undefined; title?: string | undefined; lastVisitTime?: number | undefined; visitCount?: number | undefined }>,
+): Array<{ id: string; url: string; title: string; lastVisitTime: number; visitCount: number }> {
+  return items.map((h) => ({
+    id: h.id ?? "",
+    url: h.url ?? "",
+    title: h.title ?? "",
+    lastVisitTime: h.lastVisitTime ?? 0,
+    visitCount: h.visitCount ?? 0,
+  }));
+}

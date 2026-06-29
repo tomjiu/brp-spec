@@ -49,6 +49,8 @@ export const METHOD_ROUTES = {
   "page.reload": { type: "direct", handler: "handleReload" },
   "page.waitForSelector": { type: "elementAction", action: "waitForSelector" },
   "script.execute": { type: "direct", handler: "handleScriptExecute" },
+  "history.search": { type: "direct", handler: "handleHistorySearch" },
+  "history.delete": { type: "direct", handler: "handleHistoryDelete" },
 } as const satisfies Record<string, MethodRoute>;
 
 export function validateUrl(url: unknown): string | null {
@@ -177,6 +179,8 @@ export function handleInitialize(params?: JsonObject): InitializeResult {
         "element.getAttribute",
         "keyboard.press",
         "script.execute",
+        "history.search",
+        "history.delete",
       ],
       treeDeltaSupported: false,
       multiSession: false,
