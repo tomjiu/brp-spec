@@ -108,14 +108,14 @@
 - [x] **Page Indicator** Content script floating status bar on each page
 - [x] **Domain Allowlist** Skip E1 ask for trusted domains, allowlist takes priority over blacklist
 
-## v0.5.2 — Tab-level Permissions + History Access [~]
+## v0.5.2 — Tab-level Permissions + History Access [x]
 
-- [ ] **Tab Permission Check** `controllableTabs` Set + `BRP_TAB_NOT_CONTROLLABLE` error
-- [ ] **tab.setControllable** User/AI can toggle tab controllable state
-- [ ] **Auto-demote** Tab demotes to not-controllable on user E1 denial
-- [ ] **Indicator Click** Page indicator click toggles controllable
-- [ ] **Popup UI** Extension popup lists all tabs with controllable toggle
-- [ ] **History Access** Optional `history` permission + `history.search`/`history.delete` methods
+- [x] **Tab Permission Check** `controllableTabs` Set + `BRP_TAB_NOT_CONTROLLABLE` error
+- [x] **tab.setControllable** User/AI can toggle tab controllable state
+- [x] **Auto-demote** Tab demotes to not-controllable on user E1 denial
+- [x] **Indicator Click** Page indicator click toggles controllable
+- [x] **Popup UI** Extension popup lists all tabs with controllable toggle
+- [x] **History Access** Optional `history` permission + `history.search`/`history.delete` methods
 
 ## v1.0-pre — Stable API + Compat [ ]
 

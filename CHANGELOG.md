@@ -5,6 +5,40 @@ All notable changes to the BRP (Browser Runtime Protocol) project are documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] — 2026-06-29
+
+### Tab-level Permissions (PR #49)
+
+`controllableTabs` Set tracks which tabs AI can operate.
+- AI `tab.open` / `page.navigate` auto-add to controllableTabs
+- User can toggle via `tab.setControllable` method or indicator click
+- New error code `BRP_TAB_NOT_CONTROLLABLE` (-32003)
+- Auto-demote: tab demotes to not-controllable when user denies E1 permission dialog
+
+Check order: Tab → Allowlist → Blacklist → E1
+
+### Indicator Click + Popup (PR #50)
+
+- Page indicator click toggles tab controllable state
+- Extension popup lists all tabs with controllable toggle (On/Off buttons)
+- `browser_action.default_popup` added
+
+### History Access (PR #51)
+
+- Optional `history` permission (user grants via options page)
+- New methods: `history.search` / `history.delete`
+- Returns `BRP_HISTORY_PERMISSION_NOT_GRANTED` (-32004) if not authorized
+
+### Test Summary
+
+Extension: **224 tests** | Bridge: 56 tests
+
+### Breaking Changes
+
+- `tab.list` return format changed: now includes `controllable` field
+
+---
+
 ## [0.5.1] — 2026-06-29
 
 ### Status Icon (PR #44)
