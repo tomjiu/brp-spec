@@ -13,6 +13,9 @@ import { errorMessage, getBoolean, getNumber, getObject, getString, isJsonObject
 import { checkBlacklist, checkPermission, registerAgentTabIds, resolvePermission } from "./permissions/flow";
 import { loadConfig } from "./permissions/config";
 import { shouldBlur } from "./screenshot-blur";
+import {
+  onBridgeConnect, onBridgeDisconnect, onRequestStart, onRequestEnd, updateBadge,
+} from "./status-indicator";
 
 const WS_URL = "ws://127.0.0.1:9817";
 const RECONNECT_BASE_DELAY = 1000;
@@ -42,6 +45,7 @@ browser.runtime.onMessage.addListener((msg: unknown) => {
 
 browser.tabs.onRemoved.addListener((tabId: number): void => {
   agentTabIds.delete(tabId);
+  updateBadge(agentTabIds.size);
 });
 
 async function getAuthToken(): Promise<string | null> {
@@ -188,6 +192,7 @@ function setupConnection(socket: WebSocket): void {
       };
 
       authenticated = true;
+      onBridgeConnect();
       console.log("[BRP] ← ", req.method);
       void handleRequest(req);
     } catch (error: unknown) {
@@ -198,6 +203,7 @@ function setupConnection(socket: WebSocket): void {
   socket.onclose = (event: CloseEvent): void => {
     const authFailed = event.code === 4001;
     console.warn("[BRP] Disconnected (code=%d%s)", event.code, authFailed ? ", auth failed" : "");
+    onBridgeDisconnect();
     releaseBridge(); // kill bridge, release single-instance lock
     ws = null;
     scheduleReconnect(authFailed);
@@ -247,10 +253,13 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
   const method = msg.method;
   const params = msg.params;
 
+  onRequestStart();
+
   // ── E2 Domain Blacklist (hard block, no dialog) ──
   const blacklistError = await checkBlacklist(method, params);
   if (blacklistError) {
     sendToBridge({ jsonrpc: "2.0", id, error: blacklistError });
+    onRequestEnd(true); // safety block, not a failure
     return;
   }
 
@@ -258,6 +267,7 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
   const permError = await checkPermission(id, method, params);
   if (permError) {
     sendToBridge({ jsonrpc: "2.0", id, error: permError });
+    onRequestEnd(true); // safety block, not a failure
     return;
   }
 
@@ -330,8 +340,10 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
         });
         return;
     }
+    onRequestEnd(true);
     sendToBridge({ jsonrpc: "2.0", id, result });
   } catch (error: unknown) {
+    onRequestEnd(false);
     sendToBridge({
       jsonrpc: "2.0",
       id,
@@ -372,7 +384,7 @@ async function handleTabOpen(params?: JsonObject): Promise<JsonObject> {
   if (urlErr) throw new Error(urlErr);
 
   const tab = await browser.tabs.create({ url, active: getBoolean(params, "active") !== false });
-  if (typeof tab.id === "number") agentTabIds.add(tab.id);
+  if (typeof tab.id === "number") { agentTabIds.add(tab.id); updateBadge(agentTabIds.size); }
   return { tabId: tab.id, windowId: tab.windowId, url: tab.url };
 }
 
@@ -415,6 +427,7 @@ async function handlePageNavigate(params?: JsonObject): Promise<JsonObject> {
   if (tabErr) throw new Error(tabErr);
 
   agentTabIds.add(tabId);
+  updateBadge(agentTabIds.size);
   await browser.tabs.update(tabId, { url });
   await waitForNavigation(tabId, 15000);
   return { uri: url };

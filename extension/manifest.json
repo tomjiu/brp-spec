@@ -34,6 +34,14 @@
     "page": "options/options.html",
     "open_in_tab": true
   },
+  "browser_action": {
+    "default_icon": {
+      "16": "icons/gray-16.png",
+      "32": "icons/gray-32.png",
+      "48": "icons/gray-48.png"
+    },
+    "default_title": "BRP Bridge"
+  },
   "browser_specific_settings": {
     "gecko": {
       "id": "brp-bridge@brp-spec.org",
