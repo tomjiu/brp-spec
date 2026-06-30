@@ -169,11 +169,11 @@ jobs:
   # Integration E2E: Firefox + Extension end-to-end tests (xvfb, non-blocking)
   # ---------------------------------------------------------------------------
   integration-e2e:
-    name: Integration E2E (xvfb)
+    name: Integration E2E (disabled — run locally)
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: false  # v0.8.0: Firefox + extension in CI unreliable. Run: npx playwright test --config=playwright.e2e.config.ts
     timeout-minutes: 15
-    continue-on-error: true  # v0.8.0: non-blocking, observe for 1 week
+    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
