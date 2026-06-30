@@ -166,6 +166,61 @@ jobs:
           BRP_BRIDGE_PATH: ${{ github.workspace }}/bridge/target/release/brp-bridge
 
   # ---------------------------------------------------------------------------
+  # Integration E2E: Firefox + Extension end-to-end tests (xvfb, non-blocking)
+  # ---------------------------------------------------------------------------
+  integration-e2e:
+    name: Integration E2E (xvfb)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 15
+    continue-on-error: true  # v0.8.0: non-blocking, observe for 1 week
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "bridge -> target"
+
+      - name: Build bridge
+        working-directory: bridge
+        run: cargo build --release
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install extension deps
+        working-directory: extension
+        run: npm ci
+
+      - name: Build extension
+        working-directory: extension
+        run: npm run prebuild && npm run build
+
+      - name: Install integration test deps
+        working-directory: tests/integration
+        run: npm ci
+
+      - name: Install Firefox
+        uses: browser-actions/setup-firefox@latest
+        with:
+          firefox-version: latest
+
+      - name: Run E2E tests (xvfb)
+        working-directory: tests/integration
+        run: |
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" \
+            npx playwright test --config=playwright.e2e.config.ts
+        env:
+          BRP_BRIDGE_PATH: ${{ github.workspace }}/bridge/target/release/brp-bridge
+
+  # ---------------------------------------------------------------------------
   # Summary: Required checks pass if all above succeed
   # ---------------------------------------------------------------------------
   ci-pass:
