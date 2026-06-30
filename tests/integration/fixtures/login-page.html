@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head><title>BRP Test Login</title></head>
+<body>
+  <h1>Login Page</h1>
+  <form id="login-form">
+    <input type="text" id="username" name="username" placeholder="Username">
+    <input type="password" id="password" name="password" placeholder="Password">
+    <button type="button" id="login-btn" onclick="document.getElementById('status').textContent='logged-in'">Login</button>
+    <button type="button" id="reset-btn" onclick="document.getElementById('status').textContent='ready'">Reset</button>
+  </form>
+  <p id="status">ready</p>
+</body>
+</html>
