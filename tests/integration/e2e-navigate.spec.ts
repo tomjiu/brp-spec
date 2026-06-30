@@ -24,17 +24,29 @@ test.beforeAll(async () => {
   bridge = new McpClient();
   await new Promise((r) => setTimeout(r, 2000));
 
-  // Start Firefox with extension
+  // Wait for Firefox with extension to start
   firefox = new E2EFirefox();
   await firefox.start();
 
-  // Wait for extension to register with bridge
-  await new Promise((r) => setTimeout(r, 3000));
+  // Poll browser.list until extension connects (max 10s)
+  for (let i = 0; i < 20; i++) {
+    try {
+      const resp = await bridge.send("browser.list", {});
+      const browsers = (resp.result as Record<string, unknown>)?.browsers as unknown[];
+      if (Array.isArray(browsers) && browsers.length > 0) {
+        console.log("[e2e] Extension connected to bridge");
+        break;
+      }
+    } catch {
+      // bridge not ready or extension not connected yet
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
 
-  // Initialize session (bridge requires initialize before forwarding requests)
+  // Initialize session
   const initResp = await bridge.send("initialize", {
     protocolVersion: "0.1.0",
-    clientInfo: { name: "e2e-test", version: "0.7.0" },
+    clientInfo: { name: "e2e-test", version: "0.8.0" },
   });
   if (initResp.error) {
     throw new Error(`initialize failed: ${JSON.stringify(initResp.error)}`);
