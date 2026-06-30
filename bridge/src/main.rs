@@ -261,7 +261,10 @@ async fn run_bridge() {
                 Some(lock)
             }
             Err(e) => {
-                log::warn!("[Bridge] Pipe lock not acquired: {} — B1 may start a parallel bridge", e);
+                log::warn!(
+                    "[Bridge] Pipe lock not acquired: {} — B1 may start a parallel bridge",
+                    e
+                );
                 None
             }
         }
@@ -274,7 +277,10 @@ async fn run_bridge() {
                 Some(lock)
             }
             Err(e) => {
-                log::warn!("[Bridge] Socket lock not acquired: {} — B1 may start a parallel bridge", e);
+                log::warn!(
+                    "[Bridge] Socket lock not acquired: {} — B1 may start a parallel bridge",
+                    e
+                );
                 None
             }
         }

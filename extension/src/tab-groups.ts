@@ -53,7 +53,9 @@ export async function addToGroup(tabIds: number | number[]): Promise<void> {
   if (ids.length === 0) return;
 
   try {
-    const existingId = await findExistingGroup(ids[0]);
+    const firstId = ids[0];
+    if (firstId === undefined) return;
+    const existingId = await findExistingGroup(firstId);
     if (existingId !== null) {
       // Join existing BRP group — all tabs share one group
       await browser.tabs.group({ tabIds: ids, groupId: existingId });
