@@ -132,8 +132,8 @@
 
 ## v0.8.0 — Stabilization + API Freeze [~]
 
-- [ ] **E2E CI (xvfb)** E2E tests in CI with xvfb, continue-on-error
-- [ ] **API.md** Protocol contract documentation + API freeze
+- [x] **E2E CI (xvfb)** E2E tests in CI with xvfb, continue-on-error
+- [x] **API.md** Protocol contract documentation + API freeze
 - [ ] **Docs Polish** README + USAGE + SECURITY completion
 - [ ] **Regression Tests** Backward compat: B1/multi-token/storage/protocol
 - [ ] **Flaky Fix** ws-smoke polling instead of fixed delay
