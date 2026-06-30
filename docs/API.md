@@ -83,6 +83,8 @@ Establish a session with the extension.
 }
 ```
 
+**Capability Negotiation**: The bridge computes the intersection of client-requested actions and extension-supported actions (reported dynamically from `METHOD_ROUTES`). The returned `capabilities.actions` list is the negotiated set. After initialization, the bridge enforces these — calling a method outside the negotiated set returns `-32005 BRP_CAPABILITY_NOT_SUPPORTED`. If the client sends no capabilities, the bridge defaults to all extension-supported actions (backward compatible).
+
 ### 2.2 shutdown
 
 Gracefully end a session.
@@ -522,6 +524,7 @@ All errors are JSON-RPC 2.0 server errors (-32000 to -32099).
 | -32002 | `BRP_USER_BLOCKED_DOMAIN` | Domain is in E2 blacklist |
 | -32003 | `BRP_TAB_NOT_CONTROLLABLE` | Tab is not marked as controllable |
 | -32004 | `BRP_HISTORY_PERMISSION_NOT_GRANTED` | History optional permission not granted |
+| -32005 | `BRP_CAPABILITY_NOT_SUPPORTED` | Method not in negotiated capabilities |
 | -32601 | `BRP_METHOD_NOT_FOUND` | Unknown method |
 | -32000 | `BRP_INTERNAL_ERROR` | Internal extension error |
 

@@ -4,7 +4,7 @@
 ///
 /// States: Disconnected → Connecting → Authenticating → Ready → Busy → Closing → Closed
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use ts_rs::TS;
 use uuid::Uuid;
 
@@ -218,6 +218,9 @@ pub struct Session {
     pub negotiated_version: String,
     pub client_info: Option<ClientInfo>,
     pub capabilities: Capabilities,
+    /// Negotiated action methods (extension ∩ client intersection).
+    /// Used by router for O(1) capability enforcement.
+    pub negotiated_capabilities: HashSet<String>,
     pub sequence: SequenceCounter,
 }
 
@@ -230,6 +233,7 @@ impl Session {
             negotiated_version: "0.1.0".into(),
             client_info: None,
             capabilities: Capabilities::bridge_default(),
+            negotiated_capabilities: HashSet::new(),
             sequence: SequenceCounter::new(),
         }
     }
@@ -252,6 +256,19 @@ impl Session {
         if let Some(ref client_caps) = params.capabilities {
             self.capabilities = self.capabilities.negotiate(client_caps);
         }
+
+        // Populate negotiated_capabilities for O(1) router enforcement
+        self.negotiated_capabilities = self
+            .capabilities
+            .actions
+            .iter()
+            .filter(|a| {
+                // Filter out wildcards — only concrete method names go in the set.
+                // Wildcards like "page.*" / "tab.*" are expanded at enforce-time.
+                !a.ends_with(".*")
+            })
+            .cloned()
+            .collect();
 
         self.state = SessionState::Ready;
 
@@ -316,5 +333,61 @@ mod tests {
         assert!(pre2.tag_name.is_none());
         assert!(pre2.text_contains.is_none());
         assert!(pre2.attributes.is_none());
+    }
+
+    // ── Capability Negotiation Tests ──
+
+    #[test]
+    fn test_capability_negotiation() {
+        let mut session = Session::new();
+        let params = InitializeParams {
+            protocol_version: "0.1.0".into(),
+            client_info: None,
+            capabilities: Some(Capabilities {
+                actions: vec![
+                    "page.navigate".into(),
+                    "element.click".into(),
+                    "unsupported.method".into(),
+                ],
+                ..Default::default()
+            }),
+        };
+        let result = session.initialize(&params);
+        let actions = &result.capabilities.actions;
+        assert!(actions.contains(&"page.navigate".to_string()));
+        assert!(actions.contains(&"element.click".to_string()));
+        assert!(!actions.contains(&"unsupported.method".to_string()));
+        assert!(session.negotiated_capabilities.contains("page.navigate"));
+        assert!(!session
+            .negotiated_capabilities
+            .contains("unsupported.method"));
+    }
+
+    #[test]
+    fn test_capability_negotiation_empty_client_caps() {
+        let mut session = Session::new();
+        let params = InitializeParams {
+            protocol_version: "0.1.0".into(),
+            client_info: None,
+            capabilities: None,
+        };
+        let result = session.initialize(&params);
+        assert!(!result.capabilities.actions.is_empty());
+        assert!(!session.negotiated_capabilities.is_empty());
+    }
+
+    #[test]
+    fn test_wildcards_not_in_negotiated_set() {
+        // Wildcard actions like "page.*" / "tab.*" are in bridge_default capabilities
+        // but should NOT appear in negotiated_capabilities HashSet (only concrete methods)
+        let session = Session::new();
+        // After construction, negotiated_capabilities is empty (not initialized yet)
+        assert!(session.negotiated_capabilities.is_empty());
+        // But bridge_default capabilities include wildcards
+        assert!(session
+            .capabilities
+            .actions
+            .iter()
+            .any(|a| a.ends_with(".*")));
     }
 }
