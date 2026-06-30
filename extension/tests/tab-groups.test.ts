@@ -13,19 +13,15 @@ import {
 } from "../src/tab-groups";
 
 // ── Mock browser globals ──
-// tab-groups.ts imports from the firefox-webext-browser types.
-// Tests stub browser.tabs / browser.tabGroups via the globalThis.browser object.
-
 const mockedGroup = vi.fn().mockResolvedValue(42);
 const mockedUngroup = vi.fn().mockResolvedValue(undefined);
-const mockedTabGet = vi.fn().mockResolvedValue({ id: 1, groupId: 42 });
 const mockedTabGroupsUpdate = vi.fn().mockResolvedValue(undefined);
 
 (globalThis as Record<string, unknown>).browser = {
   tabs: {
     group: mockedGroup,
     ungroup: mockedUngroup,
-    get: mockedTabGet,
+    get: vi.fn().mockResolvedValue({ id: 1 }), // no longer checked for groupId
   },
   tabGroups: {
     update: mockedTabGroupsUpdate,
@@ -34,7 +30,6 @@ const mockedTabGroupsUpdate = vi.fn().mockResolvedValue(undefined);
 };
 
 // ── isTabGroupsSupported ──
-
 describe("isTabGroupsSupported", () => {
   it("should return true when browser.tabGroups exists", () => {
     expect(isTabGroupsSupported()).toBe(true);
@@ -49,7 +44,6 @@ describe("isTabGroupsSupported", () => {
 });
 
 // ── addToGroup ──
-
 describe("addToGroup", () => {
   beforeEach(() => {
     mockedGroup.mockClear();
@@ -61,11 +55,11 @@ describe("addToGroup", () => {
     expect(mockedGroup).toHaveBeenCalledWith({ tabIds: [5] });
   });
 
-  it("should call browser.tabGroups.update with BRP title and blue color", async () => {
+  it("should set group title to empty and color to green", async () => {
     await addToGroup(3);
     expect(mockedTabGroupsUpdate).toHaveBeenCalledWith(42, {
-      title: "BRP",
-      color: "blue",
+      title: "",
+      color: "green",
     });
   });
 
@@ -93,32 +87,28 @@ describe("addToGroup", () => {
 });
 
 // ── updateGroupColor ──
-
 describe("updateGroupColor", () => {
   beforeEach(() => {
     mockedTabGroupsUpdate.mockClear();
-    mockedTabGet.mockClear();
+    mockedUngroup.mockClear();
+    mockedGroup.mockClear();
   });
 
-  it("should set green for active status", async () => {
+  it("should ungroup then re-group with green for active", async () => {
     await updateGroupColor(1, "active");
-    expect(mockedTabGroupsUpdate).toHaveBeenCalledWith(42, { color: "green" });
+    expect(mockedUngroup).toHaveBeenCalledWith(1);
+    expect(mockedGroup).toHaveBeenCalledWith({ tabIds: [1] });
+    expect(mockedTabGroupsUpdate).toHaveBeenCalledWith(42, { title: "", color: "green" });
   });
 
-  it("should set blue for idle status", async () => {
+  it("should ungroup then re-group with green for idle", async () => {
     await updateGroupColor(1, "idle");
-    expect(mockedTabGroupsUpdate).toHaveBeenCalledWith(42, { color: "blue" });
+    expect(mockedTabGroupsUpdate).toHaveBeenCalledWith(42, { title: "", color: "green" });
   });
 
-  it("should set yellow for error status", async () => {
+  it("should ungroup then re-group with yellow for error", async () => {
     await updateGroupColor(1, "error");
-    expect(mockedTabGroupsUpdate).toHaveBeenCalledWith(42, { color: "yellow" });
-  });
-
-  it("should be no-op when tab has no groupId", async () => {
-    mockedTabGet.mockResolvedValue({ id: 1, groupId: -1 });
-    await updateGroupColor(1, "active");
-    expect(mockedTabGroupsUpdate).not.toHaveBeenCalled();
+    expect(mockedTabGroupsUpdate).toHaveBeenCalledWith(42, { title: "", color: "yellow" });
   });
 
   it("should be no-op when tabGroups is unsupported", async () => {
@@ -127,14 +117,16 @@ describe("updateGroupColor", () => {
     await expect(updateGroupColor(1, "active")).resolves.toBeUndefined();
     (browser as Record<string, unknown>).tabGroups = saved;
   });
+
+  it("should catch and ignore errors silently", async () => {
+    mockedUngroup.mockRejectedValueOnce(new Error("fail"));
+    await expect(updateGroupColor(1, "error")).resolves.toBeUndefined();
+  });
 });
 
 // ── removeFromGroup ──
-
 describe("removeFromGroup", () => {
-  beforeEach(() => {
-    mockedUngroup.mockClear();
-  });
+  beforeEach(() => mockedUngroup.mockClear());
 
   it("should call browser.tabs.ungroup with tab id", async () => {
     await removeFromGroup(5);

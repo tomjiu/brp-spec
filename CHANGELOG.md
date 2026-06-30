@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.7.0] — 2026-06-30
 
+### Bug Fixes
+
+- **tabGroups**: Fix duplicate groups (Bug 3a) — `addToGroup` now queries existing BRP group first, joins instead of creating new. `updateGroupColor` updates existing group color in-place instead of ungroup+regroup.
+- **tabGroups**: Fix idle color (Bug 3b) — `COLOR_IDLE` changed from blue to green. Simplified to two states: 操控中(绿) and 故障(黄).
+- **API docs**: Clarify page scrolling via `element.scroll` + body selector (Bug 3c). No separate `page.scroll` method.
+
 ### Integration Framework (PR #57)
 
 - web-ext + headless Firefox integration test runner

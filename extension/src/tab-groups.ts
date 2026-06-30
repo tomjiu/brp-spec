@@ -5,24 +5,46 @@
  * Falls back silently to page-indicator (v0.5.1) when API is unavailable.
  *
  * Design:
- * - Only coloring — no lifecycle management (no move/restore tabs)
+ * - All BRP-controlled tabs in a window share ONE group (avoids duplicates)
+ * - addToGroup: finds existing BRP group first, creates only if none exists
+ * - updateGroupColor: updates existing group color in-place (no ungroup needed)
+ * - Group titles are empty (Firefox shows just the color dot)
+ * - Firefox auto-deletes empty groups
  * - All operations are try-catch (never block main flow)
- * - Experimental: may not work on Zen or Firefox < v139
  */
 
-const BRP_GROUP_TITLE = "BRP";
-const COLOR_IDLE = "blue";
+// idle = same green as active (simplified: only 操控中(绿) and 故障(黄))
+const COLOR_IDLE = "green";
 const COLOR_ACTIVE = "green";
 const COLOR_ERROR = "yellow";
 
-/** Check if the tabGroups API is available in this runtime. */
+const GROUP_TITLE = "";  // empty: Firefox shows just a compact color indicator
+
 /** Check if the tabGroups API is available in this runtime. */
 export function isTabGroupsSupported(): boolean {
   return typeof browser.tabGroups !== "undefined";
 }
 
 /**
- * Add tab(s) to the BRP group with idle (blue) color.
+ * Find an existing BRP group in the same window as the given tab.
+ * Returns the group ID if found, otherwise null.
+ */
+async function findExistingGroup(tabId: number): Promise<number | null> {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    if (!tab.windowId) return null;
+    const groups = await browser.tabGroups.query({ windowId: tab.windowId });
+    const brp = groups.find(g => g.title === GROUP_TITLE);
+    return brp ? brp.id : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Add tab(s) to the BRP group. Reuses existing group if one exists
+ * in the same window; otherwise creates a new one.
+ * Multiple tabs passed together share one group.
  * Silent no-op when tabGroups is unsupported or on error.
  */
 export async function addToGroup(tabIds: number | number[]): Promise<void> {
@@ -31,24 +53,32 @@ export async function addToGroup(tabIds: number | number[]): Promise<void> {
   if (ids.length === 0) return;
 
   try {
-    const groupId = await browser.tabs.group({ tabIds: ids });
-    // biome-ignore lint/suspicious/noExplicitAny: Firefox color enum not in @types
-    await browser.tabGroups.update(groupId, {
-      title: BRP_GROUP_TITLE,
-      color: COLOR_IDLE as any,
-    });
+    const existingId = await findExistingGroup(ids[0]);
+    if (existingId !== null) {
+      // Join existing BRP group — all tabs share one group
+      await browser.tabs.group({ tabIds: ids, groupId: existingId });
+    } else {
+      const groupId = await browser.tabs.group({ tabIds: ids });
+      await browser.tabGroups.update(groupId, {
+        title: GROUP_TITLE,
+        color: COLOR_IDLE as any,
+      });
+    }
   } catch {
-    // silent fallback — browser.tabGroups may not be fully supported
+    // silent fallback
   }
 }
 
 /**
- * Update the tab's group color based on request status.
- * - idle (blue): AI not currently operating on this tab
+ * Update the tab's group color to reflect request status.
+ * Tries to update the existing BRP group color in-place first;
+ * falls back to ungroup + re-group if the group can't be found.
+ *
+ * - idle (green): AI not currently operating on this tab
  * - active (green): AI request in progress
  * - error (yellow): permission denied / error
  *
- * Silent no-op when tabGroups is unsupported, tab not in a group, or on error.
+ * Silent no-op when tabGroups is unsupported or on error.
  */
 export async function updateGroupColor(
   tabId: number,
@@ -57,14 +87,27 @@ export async function updateGroupColor(
   if (!isTabGroupsSupported()) return;
 
   try {
-    const tab = await browser.tabs.get(tabId);
-    if (tab.groupId === undefined || tab.groupId === -1) return;
-
     const color =
       status === "active" ? COLOR_ACTIVE :
       status === "error" ? COLOR_ERROR : COLOR_IDLE;
-    // biome-ignore lint/suspicious/noExplicitAny: Firefox color enum not in @types
-    await browser.tabGroups.update(tab.groupId, { color: color as any });
+
+    // Try updating the existing BRP group's color in-place
+    const existingId = await findExistingGroup(tabId);
+    if (existingId !== null) {
+      await browser.tabGroups.update(existingId, {
+        title: GROUP_TITLE,
+        color: color as any,
+      });
+      return;
+    }
+
+    // Fallback: ungroup and re-group (tab not yet in a BRP group)
+    await browser.tabs.ungroup(tabId);
+    const groupId = await browser.tabs.group({ tabIds: [tabId] });
+    await browser.tabGroups.update(groupId, {
+      title: GROUP_TITLE,
+      color: color as any,
+    });
   } catch {
     // silent fallback
   }

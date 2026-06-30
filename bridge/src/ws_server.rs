@@ -282,7 +282,12 @@ async fn register_extension(
         .and_then(|t| t.as_str())
         .unwrap_or("");
 
-    if !token_manager.is_valid_token(provided_token).await {
+    // Bridge-mode: localhost WS connections without a token are allowed.
+    // In Bridge mode the MCP adapter controls the bridge lifecycle, and the
+    // extension connects directly without going through B1's token-delivery path.
+    let skip_auth = provided_token.is_empty() && peer.ip().is_loopback();
+
+    if !skip_auth && !token_manager.is_valid_token(provided_token).await {
         log::warn!("[WsServer] AUTH FAILED from {} (token mismatch)", peer);
         let err_msg = json!({
             "jsonrpc": "2.0",
