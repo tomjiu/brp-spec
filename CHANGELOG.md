@@ -5,6 +5,42 @@ All notable changes to the BRP (Browser Runtime Protocol) project are documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-06-30
+
+### Integration Framework (PR #57)
+
+- web-ext + headless Firefox integration test runner
+- Playwright Firefox channel for extension testing
+- WS-based bridge client for smoke tests (register + connection validation)
+- CI integration job (ubuntu, 10min timeout)
+- Native messaging smoke tests: bridge startup + JSON-RPC handshake
+
+### E2E Action Tests (PR #58)
+
+- navigate: URL change + tab title verification
+- click: element click + DOM state change
+- fill: input value change
+- screenshot: capture + base64 decode
+- E3 precondition: tagName mismatch verification
+- Separate Playwright config for E2E (local only, headless not yet supported)
+
+### Contract Tests (PR #59)
+
+- Error code contracts: -32001/-32002/-32003/-32004 validated
+- Message format: initialize response shape + JSON-RPC error structure
+- No browser API needed — CI-runnable
+
+### Bug Fixes
+- tabGroups error yellow: catch block calls updateGroupColor(error) (v0.6.0 leftover, PR #56)
+
+### Test Summary
+Extension: **255 unit tests** (243 + 12 contract)
+Integration: 7 smoke tests (native messaging + WS)
+Bridge: 56 tests
+
+### Breaking Changes
+None
+
 ## [0.6.0] — 2026-06-29
 
 ### ts-rs Type Alignment (PR #53)
