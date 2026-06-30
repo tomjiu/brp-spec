@@ -252,6 +252,40 @@ async fn run_bootstrap() {
 // ─── Bridge Mode (full WebSocket + Native Messaging I/O) ───
 
 async fn run_bridge() {
+    // ── Acquire IPC lock (prevents B1 from starting a second bridge) ──
+    #[cfg(windows)]
+    let _ipc_lock = {
+        match ipc_windows::acquire_pipe_lock().await {
+            Ok(lock) => {
+                log::info!("[Bridge] Windows pipe lock acquired (blocks B1 auto-start)");
+                Some(lock)
+            }
+            Err(e) => {
+                log::warn!(
+                    "[Bridge] Pipe lock not acquired: {} — B1 may start a parallel bridge",
+                    e
+                );
+                None
+            }
+        }
+    };
+    #[cfg(unix)]
+    let _ipc_lock = {
+        match ipc_unix::acquire_socket_lock().await {
+            Ok(lock) => {
+                log::info!("[Bridge] Unix socket lock acquired (blocks B1 auto-start)");
+                Some(lock)
+            }
+            Err(e) => {
+                log::warn!(
+                    "[Bridge] Socket lock not acquired: {} — B1 may start a parallel bridge",
+                    e
+                );
+                None
+            }
+        }
+    };
+
     // ── Configuration ──
     let config = BridgeConfig::load();
     log::info!("[Auth] Token authentication ENABLED (mandatory)");

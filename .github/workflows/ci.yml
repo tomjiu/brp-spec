@@ -171,7 +171,7 @@ jobs:
   integration-e2e:
     name: Integration E2E (disabled — run locally)
     runs-on: ubuntu-latest
-    if: false  # v0.8.0: Firefox + extension in CI unreliable. Run: npx playwright test --config=playwright.e2e.config.ts
+    if: false  # v0.8.0: Firefox + extension in CI unreliable. Run locally.
     timeout-minutes: 15
     continue-on-error: true
 

@@ -1,28 +1,90 @@
 /**
- * v0.6.0 tabGroups Coloring (Experimental)
+ * v0.8.0 tabGroups — Three fixed groups, tabs move between them
  *
- * Uses Firefox v139+ browser.tabGroups API to colorize browser tabs.
- * Falls back silently to page-indicator (v0.5.1) when API is unavailable.
+ * Uses Firefox v139+ browser.tabGroups API. Falls back silently to
+ * page-indicator (v0.5.1) when API is unavailable.
  *
  * Design:
- * - Only coloring — no lifecycle management (no move/restore tabs)
+ * - At most 3 BRP groups per window:  idle (blue) / active (green) / error (yellow)
+ * - Groups are identified by title: "BRP-idle", "BRP-active", "BRP-error"
+ * - updateGroupColor ungroups the tab then moves it into the target group
+ * - Empty groups survive (Firefox keeps them) — no new-group proliferation
  * - All operations are try-catch (never block main flow)
- * - Experimental: may not work on Zen or Firefox < v139
  */
 
-const BRP_GROUP_TITLE = "BRP";
 const COLOR_IDLE = "blue";
 const COLOR_ACTIVE = "green";
 const COLOR_ERROR = "yellow";
 
-/** Check if the tabGroups API is available in this runtime. */
+const TITLE_IDLE = "BRP-idle";
+const TITLE_ACTIVE = "BRP-active";
+const TITLE_ERROR = "BRP-error";
+
+function titleFor(status: "idle" | "active" | "error"): string {
+  switch (status) {
+    case "active": return TITLE_ACTIVE;
+    case "error":  return TITLE_ERROR;
+    default:       return TITLE_IDLE;
+  }
+}
+
+function colorFor(status: "idle" | "active" | "error"): string {
+  switch (status) {
+    case "active": return COLOR_ACTIVE;
+    case "error":  return COLOR_ERROR;
+    default:       return COLOR_IDLE;
+  }
+}
+
 /** Check if the tabGroups API is available in this runtime. */
 export function isTabGroupsSupported(): boolean {
   return typeof browser.tabGroups !== "undefined";
 }
 
 /**
- * Add tab(s) to the BRP group with idle (blue) color.
+ * Find an existing BRP group in the same window by title.
+ * Returns the group ID if found, otherwise null.
+ */
+async function findGroupByTitle(
+  tabId: number,
+  title: string,
+): Promise<number | null> {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    if (!tab.windowId) return null;
+    const groups = await browser.tabGroups.query({ windowId: tab.windowId });
+    const found = groups.find(g => g.title === title);
+    return found ? found.id : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get or create the group for a given status, using `tabId` to locate
+ * the correct window.  Returns the group ID on success, null on error.
+ */
+async function ensureGroup(
+  tabId: number,
+  status: "idle" | "active" | "error",
+): Promise<number | null> {
+  const title = titleFor(status);
+  const existing = await findGroupByTitle(tabId, title);
+  if (existing !== null) return existing;
+
+  // Ungroup first so we don't steal another group's tab
+  try { await browser.tabs.ungroup(tabId); } catch { /* ignore */ }
+
+  const groupId = await browser.tabs.group({ tabIds: [tabId] });
+  await browser.tabGroups.update(groupId, {
+    title,
+    color: colorFor(status) as any,
+  });
+  return groupId;
+}
+
+/**
+ * Add tab(s) to the idle (blue) group.
  * Silent no-op when tabGroups is unsupported or on error.
  */
 export async function addToGroup(tabIds: number | number[]): Promise<void> {
@@ -31,24 +93,24 @@ export async function addToGroup(tabIds: number | number[]): Promise<void> {
   if (ids.length === 0) return;
 
   try {
-    const groupId = await browser.tabs.group({ tabIds: ids });
-    // biome-ignore lint/suspicious/noExplicitAny: Firefox color enum not in @types
-    await browser.tabGroups.update(groupId, {
-      title: BRP_GROUP_TITLE,
-      color: COLOR_IDLE as any,
-    });
+    const groupId = await ensureGroup(ids[0]!, "idle");
+    if (groupId === null) return;
+
+    // Add all tabs at once — Firefox lets us specify groupId
+    await browser.tabs.group({ tabIds: ids, groupId });
   } catch {
-    // silent fallback — browser.tabGroups may not be fully supported
+    // silent fallback
   }
 }
 
 /**
- * Update the tab's group color based on request status.
- * - idle (blue): AI not currently operating on this tab
- * - active (green): AI request in progress
- * - error (yellow): permission denied / error
+ * Move a tab into the coloured group that matches its status.
  *
- * Silent no-op when tabGroups is unsupported, tab not in a group, or on error.
+ * - idle  → blue   — AI not currently operating on this tab
+ * - active → green  — AI request in progress
+ * - error  → yellow — permission denied / error
+ *
+ * Silent no-op when tabGroups is unsupported or on error.
  */
 export async function updateGroupColor(
   tabId: number,
@@ -57,14 +119,12 @@ export async function updateGroupColor(
   if (!isTabGroupsSupported()) return;
 
   try {
-    const tab = await browser.tabs.get(tabId);
-    if (tab.groupId === undefined || tab.groupId === -1) return;
-
-    const color =
-      status === "active" ? COLOR_ACTIVE :
-      status === "error" ? COLOR_ERROR : COLOR_IDLE;
-    // biome-ignore lint/suspicious/noExplicitAny: Firefox color enum not in @types
-    await browser.tabGroups.update(tab.groupId, { color: color as any });
+    const groupId = await ensureGroup(tabId, status);
+    if (groupId !== null) {
+      // Move the tab into the right group (ungroup then re-group)
+      await browser.tabs.ungroup(tabId);
+      await browser.tabs.group({ tabIds: [tabId], groupId });
+    }
   } catch {
     // silent fallback
   }

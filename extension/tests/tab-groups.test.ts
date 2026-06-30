@@ -1,5 +1,5 @@
 /**
- * v0.6.0: tab-groups.ts tests
+ * v0.8.0: tab-groups.ts tests — three fixed groups (idle/active/error)
  *
  * IMPORTANT: All tests import real code from ../src/tab-groups.
  * No reimplementation — mocking only stubs browser APIs.
@@ -13,28 +13,30 @@ import {
 } from "../src/tab-groups";
 
 // ── Mock browser globals ──
-// tab-groups.ts imports from the firefox-webext-browser types.
-// Tests stub browser.tabs / browser.tabGroups via the globalThis.browser object.
-
 const mockedGroup = vi.fn().mockResolvedValue(42);
 const mockedUngroup = vi.fn().mockResolvedValue(undefined);
-const mockedTabGet = vi.fn().mockResolvedValue({ id: 1, groupId: 42 });
 const mockedTabGroupsUpdate = vi.fn().mockResolvedValue(undefined);
+
+function resetMocks() {
+  mockedGroup.mockReset().mockResolvedValue(42);
+  mockedUngroup.mockReset().mockResolvedValue(undefined);
+  mockedTabGroupsUpdate.mockReset().mockResolvedValue(undefined);
+}
 
 (globalThis as Record<string, unknown>).browser = {
   tabs: {
     group: mockedGroup,
     ungroup: mockedUngroup,
-    get: mockedTabGet,
+    get: vi.fn().mockResolvedValue({ id: 1, windowId: 1 }),
   },
   tabGroups: {
     update: mockedTabGroupsUpdate,
+    // Return empty array → ensureGroup always creates new groups
     query: vi.fn().mockResolvedValue([]),
   },
 };
 
 // ── isTabGroupsSupported ──
-
 describe("isTabGroupsSupported", () => {
   it("should return true when browser.tabGroups exists", () => {
     expect(isTabGroupsSupported()).toBe(true);
@@ -49,29 +51,29 @@ describe("isTabGroupsSupported", () => {
 });
 
 // ── addToGroup ──
-
 describe("addToGroup", () => {
   beforeEach(() => {
-    mockedGroup.mockClear();
-    mockedTabGroupsUpdate.mockClear();
+    resetMocks();
   });
 
-  it("should call browser.tabs.group with single tab id", async () => {
+  it("should create idle (blue) group for single tab", async () => {
     await addToGroup(5);
+    // first call: ungroup, then group to create the group
     expect(mockedGroup).toHaveBeenCalledWith({ tabIds: [5] });
-  });
-
-  it("should call browser.tabGroups.update with BRP title and blue color", async () => {
-    await addToGroup(3);
     expect(mockedTabGroupsUpdate).toHaveBeenCalledWith(42, {
-      title: "BRP",
+      title: "BRP-idle",
       color: "blue",
     });
   });
 
   it("should handle array of tab ids", async () => {
     await addToGroup([1, 2, 3]);
-    expect(mockedGroup).toHaveBeenCalledWith({ tabIds: [1, 2, 3] });
+    // ensureGroup creates the group with first tab, then addToGroup adds all
+    expect(mockedGroup).toHaveBeenCalledWith({ tabIds: [1, 2, 3], groupId: 42 });
+    expect(mockedTabGroupsUpdate).toHaveBeenCalledWith(42, {
+      title: "BRP-idle",
+      color: "blue",
+    });
   });
 
   it("should be no-op when tabGroups is unsupported", async () => {
@@ -93,32 +95,37 @@ describe("addToGroup", () => {
 });
 
 // ── updateGroupColor ──
-
 describe("updateGroupColor", () => {
   beforeEach(() => {
-    mockedTabGroupsUpdate.mockClear();
-    mockedTabGet.mockClear();
+    resetMocks();
   });
 
-  it("should set green for active status", async () => {
+  it("should move tab to active (green) group", async () => {
     await updateGroupColor(1, "active");
-    expect(mockedTabGroupsUpdate).toHaveBeenCalledWith(42, { color: "green" });
+    // ensureGroup: ungroup + create group + set title/color
+    // then: ungroup + move tab into group
+    expect(mockedUngroup).toHaveBeenCalled();
+    expect(mockedGroup).toHaveBeenCalled();
+    expect(mockedTabGroupsUpdate).toHaveBeenCalledWith(42, {
+      title: "BRP-active",
+      color: "green",
+    });
   });
 
-  it("should set blue for idle status", async () => {
+  it("should move tab to idle (blue) group", async () => {
     await updateGroupColor(1, "idle");
-    expect(mockedTabGroupsUpdate).toHaveBeenCalledWith(42, { color: "blue" });
+    expect(mockedTabGroupsUpdate).toHaveBeenCalledWith(42, {
+      title: "BRP-idle",
+      color: "blue",
+    });
   });
 
-  it("should set yellow for error status", async () => {
+  it("should move tab to error (yellow) group", async () => {
     await updateGroupColor(1, "error");
-    expect(mockedTabGroupsUpdate).toHaveBeenCalledWith(42, { color: "yellow" });
-  });
-
-  it("should be no-op when tab has no groupId", async () => {
-    mockedTabGet.mockResolvedValue({ id: 1, groupId: -1 });
-    await updateGroupColor(1, "active");
-    expect(mockedTabGroupsUpdate).not.toHaveBeenCalled();
+    expect(mockedTabGroupsUpdate).toHaveBeenCalledWith(42, {
+      title: "BRP-error",
+      color: "yellow",
+    });
   });
 
   it("should be no-op when tabGroups is unsupported", async () => {
@@ -127,12 +134,17 @@ describe("updateGroupColor", () => {
     await expect(updateGroupColor(1, "active")).resolves.toBeUndefined();
     (browser as Record<string, unknown>).tabGroups = saved;
   });
+
+  it("should catch and ignore errors silently", async () => {
+    mockedUngroup.mockRejectedValueOnce(new Error("fail"));
+    await expect(updateGroupColor(1, "error")).resolves.toBeUndefined();
+  });
 });
 
 // ── removeFromGroup ──
-
 describe("removeFromGroup", () => {
   beforeEach(() => {
+    resetMocks();
     mockedUngroup.mockClear();
   });
 

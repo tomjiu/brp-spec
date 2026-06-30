@@ -323,6 +323,15 @@ Type text with simulated keystrokes (respects keyboard events).
 
 All return `{ "result": { "matchedSelector": {...} } }` (getAttribute returns `{ "value": "..." }`).
 
+**Note on page-level scrolling**: There is no separate `page.scroll` method. To scroll the page, use `element.scroll` with the `body` selector:
+```json
+{
+  "method": "element.scroll",
+  "params": { "selector": { "type": "css", "value": "body" } }
+}
+```
+When called without a selector, `element.scroll` scrolls to the top of the page (`window.scrollTo({ top: 0 })`).
+
 
 
 ---
