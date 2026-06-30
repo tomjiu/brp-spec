@@ -2,6 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: ".",
+  testMatch: ["*.test.ts", "!e2e-*.spec.ts"],
   timeout: 60000,
   retries: 1,
   // time to wait for beforeAll/afterAll hooks
