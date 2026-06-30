@@ -212,6 +212,13 @@ jobs:
         with:
           firefox-version: latest
 
+      - name: Install xvfb
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq xvfb
+
+      - name: Install Playwright browsers
+        working-directory: tests/integration
+        run: npx playwright install firefox
+
       - name: Run E2E tests (xvfb)
         working-directory: tests/integration
         run: |
@@ -219,6 +226,7 @@ jobs:
             npx playwright test --config=playwright.e2e.config.ts
         env:
           BRP_BRIDGE_PATH: ${{ github.workspace }}/bridge/target/release/brp-bridge
+          DISPLAY: ":99"
 
   # ---------------------------------------------------------------------------
   # Summary: Required checks pass if all above succeed
