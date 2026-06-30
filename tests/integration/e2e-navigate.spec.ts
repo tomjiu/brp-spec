@@ -30,6 +30,15 @@ test.beforeAll(async () => {
 
   // Wait for extension to register with bridge
   await new Promise((r) => setTimeout(r, 3000));
+
+  // Initialize session (bridge requires initialize before forwarding requests)
+  const initResp = await bridge.send("initialize", {
+    protocolVersion: "0.1.0",
+    clientInfo: { name: "e2e-test", version: "0.7.0" },
+  });
+  if (initResp.error) {
+    throw new Error(`initialize failed: ${JSON.stringify(initResp.error)}`);
+  }
 }, 60000);
 
 test.afterAll(async () => {
