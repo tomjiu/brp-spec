@@ -1,24 +1,40 @@
 /**
- * v0.6.0 tabGroups Coloring (Experimental)
+ * v0.8.0 tabGroups — Three fixed groups, tabs move between them
  *
- * Uses Firefox v139+ browser.tabGroups API to colorize browser tabs.
- * Falls back silently to page-indicator (v0.5.1) when API is unavailable.
+ * Uses Firefox v139+ browser.tabGroups API. Falls back silently to
+ * page-indicator (v0.5.1) when API is unavailable.
  *
  * Design:
- * - All BRP-controlled tabs in a window share ONE group (avoids duplicates)
- * - addToGroup: finds existing BRP group first, creates only if none exists
- * - updateGroupColor: updates existing group color in-place (no ungroup needed)
- * - Group titles are empty (Firefox shows just the color dot)
- * - Firefox auto-deletes empty groups
+ * - At most 3 BRP groups per window:  idle (blue) / active (green) / error (yellow)
+ * - Groups are identified by title: "BRP-idle", "BRP-active", "BRP-error"
+ * - updateGroupColor ungroups the tab then moves it into the target group
+ * - Empty groups survive (Firefox keeps them) — no new-group proliferation
  * - All operations are try-catch (never block main flow)
  */
 
-// idle = same green as active (simplified: only 操控中(绿) and 故障(黄))
-const COLOR_IDLE = "green";
+const COLOR_IDLE = "blue";
 const COLOR_ACTIVE = "green";
 const COLOR_ERROR = "yellow";
 
-const GROUP_TITLE = "";  // empty: Firefox shows just a compact color indicator
+const TITLE_IDLE = "BRP-idle";
+const TITLE_ACTIVE = "BRP-active";
+const TITLE_ERROR = "BRP-error";
+
+function titleFor(status: "idle" | "active" | "error"): string {
+  switch (status) {
+    case "active": return TITLE_ACTIVE;
+    case "error":  return TITLE_ERROR;
+    default:       return TITLE_IDLE;
+  }
+}
+
+function colorFor(status: "idle" | "active" | "error"): string {
+  switch (status) {
+    case "active": return COLOR_ACTIVE;
+    case "error":  return COLOR_ERROR;
+    default:       return COLOR_IDLE;
+  }
+}
 
 /** Check if the tabGroups API is available in this runtime. */
 export function isTabGroupsSupported(): boolean {
@@ -26,25 +42,49 @@ export function isTabGroupsSupported(): boolean {
 }
 
 /**
- * Find an existing BRP group in the same window as the given tab.
+ * Find an existing BRP group in the same window by title.
  * Returns the group ID if found, otherwise null.
  */
-async function findExistingGroup(tabId: number): Promise<number | null> {
+async function findGroupByTitle(
+  tabId: number,
+  title: string,
+): Promise<number | null> {
   try {
     const tab = await browser.tabs.get(tabId);
     if (!tab.windowId) return null;
     const groups = await browser.tabGroups.query({ windowId: tab.windowId });
-    const brp = groups.find(g => g.title === GROUP_TITLE);
-    return brp ? brp.id : null;
+    const found = groups.find(g => g.title === title);
+    return found ? found.id : null;
   } catch {
     return null;
   }
 }
 
 /**
- * Add tab(s) to the BRP group. Reuses existing group if one exists
- * in the same window; otherwise creates a new one.
- * Multiple tabs passed together share one group.
+ * Get or create the group for a given status, using `tabId` to locate
+ * the correct window.  Returns the group ID on success, null on error.
+ */
+async function ensureGroup(
+  tabId: number,
+  status: "idle" | "active" | "error",
+): Promise<number | null> {
+  const title = titleFor(status);
+  const existing = await findGroupByTitle(tabId, title);
+  if (existing !== null) return existing;
+
+  // Ungroup first so we don't steal another group's tab
+  try { await browser.tabs.ungroup(tabId); } catch { /* ignore */ }
+
+  const groupId = await browser.tabs.group({ tabIds: [tabId] });
+  await browser.tabGroups.update(groupId, {
+    title,
+    color: colorFor(status) as any,
+  });
+  return groupId;
+}
+
+/**
+ * Add tab(s) to the idle (blue) group.
  * Silent no-op when tabGroups is unsupported or on error.
  */
 export async function addToGroup(tabIds: number | number[]): Promise<void> {
@@ -53,32 +93,22 @@ export async function addToGroup(tabIds: number | number[]): Promise<void> {
   if (ids.length === 0) return;
 
   try {
-    const firstId = ids[0];
-    if (firstId === undefined) return;
-    const existingId = await findExistingGroup(firstId);
-    if (existingId !== null) {
-      // Join existing BRP group — all tabs share one group
-      await browser.tabs.group({ tabIds: ids, groupId: existingId });
-    } else {
-      const groupId = await browser.tabs.group({ tabIds: ids });
-      await browser.tabGroups.update(groupId, {
-        title: GROUP_TITLE,
-        color: COLOR_IDLE as any,
-      });
-    }
+    const groupId = await ensureGroup(ids[0]!, "idle");
+    if (groupId === null) return;
+
+    // Add all tabs at once — Firefox lets us specify groupId
+    await browser.tabs.group({ tabIds: ids, groupId });
   } catch {
     // silent fallback
   }
 }
 
 /**
- * Update the tab's group color to reflect request status.
- * Tries to update the existing BRP group color in-place first;
- * falls back to ungroup + re-group if the group can't be found.
+ * Move a tab into the coloured group that matches its status.
  *
- * - idle (green): AI not currently operating on this tab
- * - active (green): AI request in progress
- * - error (yellow): permission denied / error
+ * - idle  → blue   — AI not currently operating on this tab
+ * - active → green  — AI request in progress
+ * - error  → yellow — permission denied / error
  *
  * Silent no-op when tabGroups is unsupported or on error.
  */
@@ -89,27 +119,12 @@ export async function updateGroupColor(
   if (!isTabGroupsSupported()) return;
 
   try {
-    const color =
-      status === "active" ? COLOR_ACTIVE :
-      status === "error" ? COLOR_ERROR : COLOR_IDLE;
-
-    // Try updating the existing BRP group's color in-place
-    const existingId = await findExistingGroup(tabId);
-    if (existingId !== null) {
-      await browser.tabGroups.update(existingId, {
-        title: GROUP_TITLE,
-        color: color as any,
-      });
-      return;
+    const groupId = await ensureGroup(tabId, status);
+    if (groupId !== null) {
+      // Move the tab into the right group (ungroup then re-group)
+      await browser.tabs.ungroup(tabId);
+      await browser.tabs.group({ tabIds: [tabId], groupId });
     }
-
-    // Fallback: ungroup and re-group (tab not yet in a BRP group)
-    await browser.tabs.ungroup(tabId);
-    const groupId = await browser.tabs.group({ tabIds: [tabId] });
-    await browser.tabGroups.update(groupId, {
-      title: GROUP_TITLE,
-      color: color as any,
-    });
   } catch {
     // silent fallback
   }
