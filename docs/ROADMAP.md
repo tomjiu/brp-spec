@@ -130,13 +130,17 @@
 - [x] **Contract Tests** Bridge ↔ Extension message format verification
 - [x] **Error Yellow Fix** tabGroups catch block updateGroupColor(error)
 
-## v0.8.0 — Stabilization + API Freeze [~]
+## v0.8.0 — Stabilization + API Freeze [x]
 
 - [x] **E2E CI (xvfb)** E2E tests in CI with xvfb, continue-on-error
+- [x] **E2E CI Disabled** Firefox + extension unreliable in CI — run locally
 - [x] **API.md** Protocol contract documentation + API freeze
 - [x] **Docs Polish** README + USAGE + SECURITY completion
-- [ ] **Regression Tests** Backward compat: B1/multi-token/storage/protocol
-- [ ] **Flaky Fix** ws-smoke polling instead of fixed delay
+- [x] **Regression Tests** Backward compat: B1/multi-token/storage/protocol
+- [x] **Flaky Fix** ws-smoke polling instead of fixed delay
+- [x] **UI Bug Fixes** tabGroups 3 fixed groups (blue/green/yellow), scroll doc
+- [x] **Bridge Auto-Connect** IPC lock + localhost token skip
+- [x] **Release Workflow** bridge binaries + extension xpi
 
 ## v1.0-pre — Stable API + Compat [ ]
 

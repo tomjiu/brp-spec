@@ -5,15 +5,35 @@ All notable changes to the BRP (Browser Runtime Protocol) project are documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — 2026-06-30
+
+### Release Workflow
+- Bridge binaries for Windows/macOS/Linux published on release
+- Extension .xpi signed package published on release
+- E2E CI disabled (Firefox + extension unreliable in CI — run locally)
+
+### Protocol & Docs
+- API.md protocol documentation + API freeze
+- Docs polish (README/SECURITY/USAGE)
+
+### Testing
+- Regression tests (backward compatibility)
+- Flaky fix (ws-smoke polling)
+- Chain test: `test_brp_chain.py` (MCP Adapter → Bridge)
+
+### UI Bug Fixes
+- **tabGroups**: 3 fixed groups — tabs move between blue (idle) / green (active) / yellow (error) groups, identified by title. No duplicate groups.
+- **API docs**: Clarify page scrolling via `element.scroll` + body selector; no separate `page.scroll` method.
+
+### Bridge
+- Bridge mode acquires IPC lock to prevent B1 parallel bridge
+- localhost WS connections skip token validation entirely
+
+### Known Limitations
+- E2E tests require local Firefox
+- tabGroups Experimental: real-machine verification needed
+
 ## [0.7.0] — 2026-06-30
-
-### Bug Fixes
-
-- **tabGroups**: Fix duplicate groups (Bug 3a) — `addToGroup` now queries existing BRP group first, joins instead of creating new. `updateGroupColor` updates existing group color in-place instead of ungroup+regroup.
-- **tabGroups**: Fix idle color (Bug 3b) — `COLOR_IDLE` changed from blue to green. Simplified to two states: 操控中(绿) and 故障(黄).
-- **API docs**: Clarify page scrolling via `element.scroll` + body selector (Bug 3c). No separate `page.scroll` method.
-
-### Integration Framework (PR #57)
 
 - web-ext + headless Firefox integration test runner
 - Playwright Firefox channel for extension testing
