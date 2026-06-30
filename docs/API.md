@@ -152,6 +152,59 @@ Capture a screenshot of the current page.
 
 `data` is a base64-encoded PNG image.
 
+### 3.3 page.getInteractionTree
+
+Get the DOM interaction tree for the current page.
+
+```json
+{
+  "method": "page.getInteractionTree",
+  "params": { "tabId": 1 }
+}
+```
+
+**Response**:
+```json
+{
+  "result": {
+    "tree": {
+      "tag": "body",
+      "children": [
+        { "tag": "button", "text": "Login", "actionable": true }
+      ]
+    }
+  }
+}
+```
+
+### 3.4 page.goBack / page.goForward / page.reload
+
+Navigation history methods (no params beyond optional `tabId`):
+
+```json
+{ "method": "page.goBack", "params": {} }
+{ "method": "page.goForward", "params": {} }
+{ "method": "page.reload", "params": {} }
+```
+
+**Response**: `{ "result": { "uri": "...", "title": "..." } }`
+
+### 3.5 page.waitForSelector
+
+Wait for a CSS selector to appear in the DOM.
+
+```json
+{
+  "method": "page.waitForSelector",
+  "params": {
+    "selector": { "type": "css", "value": "#login-btn" },
+    "timeout": 5000
+  }
+}
+```
+
+**Response**: `{ "result": { "found": true } }`
+
 ---
 
 ## 4. Element Methods
@@ -234,6 +287,44 @@ Precondition failure returns `BRP_PRECONDITION_FAILED` (E3).
 
 **Response**: `{ "result": { "matchedSelector": { "type": "css", "value": "#username" } } }`
 
+### 4.5 element.type
+
+Type text with simulated keystrokes (respects keyboard events).
+
+```json
+{
+  "method": "element.type",
+  "params": {
+    "selector": { "type": "css", "value": "#username" },
+    "value": "testuser",
+    "delay": 50,
+    "tabId": 1
+  }
+}
+```
+
+**Response**: `{ "result": { "matchedSelector": { "type": "css", "value": "#username" } } }`
+
+### 4.6 element.scroll / element.hover / element.select / element.getAttribute
+
+```json
+// Scroll element into view
+{ "method": "element.scroll", "params": { "selector": {...} } }
+
+// Hover over element
+{ "method": "element.hover", "params": { "selector": {...} } }
+
+// Select option in a <select> element
+{ "method": "element.select", "params": { "selector": {...}, "value": "option-value" } }
+
+// Get element attribute value
+{ "method": "element.getAttribute", "params": { "selector": {...}, "name": "href" } }
+```
+
+All return `{ "result": { "matchedSelector": {...} } }` (getAttribute returns `{ "value": "..." }`).
+
+
+
 ---
 
 ## 5. Tab Methods
@@ -286,7 +377,22 @@ Opens a new tab. AI-opened tabs are automatically marked as controllable.
 }
 ```
 
-### 5.3 tab.setControllable
+### 5.3 tab.close / tab.select
+
+Close the current tab or switch to another tab.
+
+```json
+// Close active tab (or specify tabId)
+{ "method": "tab.close", "params": { "tabId": 2 } }
+
+// Switch to tab by id or page index
+{ "method": "tab.select", "params": { "tabId": 1 } }
+{ "method": "tab.select", "params": { "pageIdx": 0 } }
+```
+
+**Response**: `{ "result": {} }`
+
+### 5.4 tab.setControllable
 
 Toggle whether a tab is controllable by the AI agent.
 
@@ -382,6 +488,19 @@ History methods require the `history` optional permission (granted via extension
 
 If history permission is not granted, returns `BRP_HISTORY_PERMISSION_NOT_GRANTED` (-32004).
 
+### 8.2 history.delete
+
+Delete a URL from browser history.
+
+```json
+{
+  "method": "history.delete",
+  "params": { "url": "https://example.com" }
+}
+```
+
+**Response**: `{ "result": { "deleted": "https://example.com" } }`
+
 ---
 
 ## 9. Error Codes
@@ -447,11 +566,80 @@ Non-tab-scoped methods: `initialize`, `shutdown`, `tab.list`, `tab.open`, `tab.s
 
 ---
 
-## 11. Notification Events
+## 12. Token Management (Bridge)
+
+Token management methods are handled by the bridge directly (do not go through extension).
+They require a master token for authorization.
+
+| Method | Description | Params |
+|--------|-------------|--------|
+| `token.issue` | Issue a client token | `masterToken` |
+| `token.revoke` | Revoke a client token | `masterToken`, `token` |
+| `token.list` | List all client tokens | `masterToken` |
+
+### 12.1 token.issue
+
+Issue a new client token for extension authentication.
+
+```json
+{
+  "method": "token.issue",
+  "params": { "masterToken": "mt_abc123" }
+}
+```
+
+**Response**:
+```json
+{
+  "result": { "token": "ct_xyz789" }
+}
+```
+
+Error: `BRP_MASTER_TOKEN_REQUIRED` if masterToken is invalid.
+
+### 12.2 token.revoke
+
+Revoke an issued client token.
+
+```json
+{
+  "method": "token.revoke",
+  "params": { "masterToken": "mt_abc123", "token": "ct_xyz789" }
+}
+```
+
+**Response**:
+```json
+{
+  "result": { "revoked": true }
+}
+```
+
+### 12.3 token.list
+
+List all active client tokens.
+
+```json
+{
+  "method": "token.list",
+  "params": { "masterToken": "mt_abc123" }
+}
+```
+
+**Response**:
+```json
+{
+  "result": { "tokens": ["ct_aaa", "ct_bbb"] }
+}
+```
+
+---
+
+## 13. Notification Events
 
 Extension may send notifications to connected clients:
 
-### 11.1 notification/bridge.authToken
+### 13.1 notification/bridge.authToken
 
 Sent by the bridge on startup with authentication token:
 
@@ -469,10 +657,10 @@ Sent by the bridge on startup with authentication token:
 
 ---
 
-## 12. API Freeze (v0.8.0)
+## 14. API Freeze (v0.8.0)
 
 As of v0.8.0:
-- **Methods**: All 23 methods are stable. New methods may be added (additive only).
+- **Methods**: All 23 extension methods + 3 token management methods are stable. New methods may be added (additive only).
 - **Error codes**: -32001 through -32004 are frozen. Code values, errorCode strings, and `retriable`/`recoveryHint` fields will not change.
 - **Message format**: JSON-RPC 2.0 `{ jsonrpc, id, method/result/error }` structure is stable.
 - **tab.list format**: Returns `{ tabs: [...], count }` with `controllable` field (since v0.5.2).
