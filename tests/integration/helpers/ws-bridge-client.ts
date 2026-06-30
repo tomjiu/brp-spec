@@ -62,40 +62,57 @@ export class WsBridgeClient {
   }
 
   private async connect(): Promise<void> {
-    // Wait a moment for bridge to start listening
-    await new Promise((r) => setTimeout(r, 1000));
+    // Poll for bridge port availability (max 5s, 50 attempts × 100ms)
+    const maxAttempts = 50;
+    const intervalMs = 100;
 
-    return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(`ws://127.0.0.1:${this.port}`);
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        this.ws = new WebSocket(`ws://127.0.0.1:${this.port}`);
 
-      this.ws.on("open", () => {
-        console.log("[ws-client] connected to bridge");
-        this.register().then(() => {
-          resolve();
-        }).catch(reject);
-      });
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error("WS connect timeout"));
+          }, 1000);
 
-      this.ws.on("message", (data: WebSocket.Data) => {
-        try {
-          const msg = JSON.parse(data.toString());
-          const id = msg.id;
-          if (id !== undefined && this.pending.has(id)) {
-            const { resolve } = this.pending.get(id)!;
-            this.pending.delete(id);
-            resolve(msg);
+          this.ws!.on("open", () => {
+            clearTimeout(timeout);
+            console.log("[ws-client] connected to bridge");
+            resolve();
+          });
+
+          this.ws!.on("error", (err: Error) => {
+            clearTimeout(timeout);
+            reject(err);
+          });
+        });
+
+        // Connection succeeded — set up message handler + register
+        this.ws!.on("message", (data: WebSocket.Data) => {
+          try {
+            const msg = JSON.parse(data.toString());
+            const id = msg.id;
+            if (id !== undefined && this.pending.has(id)) {
+              const { resolve } = this.pending.get(id)!;
+              this.pending.delete(id);
+              resolve(msg);
+            }
+          } catch {
+            // ignore non-JSON messages
           }
-        } catch {
-          // ignore non-JSON messages
+        });
+
+        await this.register();
+        return; // success
+      } catch {
+        // Bridge not ready yet, retry after interval
+        if (i < maxAttempts - 1) {
+          await new Promise((r) => setTimeout(r, intervalMs));
+        } else {
+          throw new Error(`Bridge not reachable on port ${this.port} after ${maxAttempts * intervalMs}ms`);
         }
-      });
-
-      this.ws.on("error", (err: Error) => {
-        console.error(`[ws-client] error: ${err.message}`);
-        reject(err);
-      });
-
-      setTimeout(() => reject(new Error("WS connect timeout")), 5000);
-    });
+      }
+    }
   }
 
   async ready(): Promise<void> {
