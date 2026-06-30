@@ -1,6 +1,31 @@
-# BRP MVP — Browser Runtime Protocol
+# BRP — Browser Runtime Protocol v0.7.0
 
 MVP implementation of the Browser Runtime Protocol (BRP): a Firefox/Zen extension + Rust Bridge that enables AI agents to interact with the user's real browser session.
+
+## Quick Start
+
+```bash
+# 1. Build the bridge
+cd bridge && cargo build --release
+
+# 2. Build the extension
+cd extension && npm ci && npm run build
+
+# 3. Load extension in Firefox
+#    about:debugging → Load Temporary Add-on → select extension/manifest.json
+
+# 4. Start bridge (standalone mode)
+BRP_STANDALONE=1 ./bridge/target/release/brp-bridge
+
+# 5. Configure extension token
+#    Right-click BRP icon → Options → paste token from ~/.brp-bridge-token
+
+# 6. Verify connection
+#    Extension badge shows connected count, options page shows "Connected"
+```
+
+For MCP client setup, see [docs/USAGE-MODES.md](docs/USAGE-MODES.md).
+Full protocol reference: [docs/API.md](docs/API.md).
 
 ## Architecture
 
@@ -163,49 +188,15 @@ Add the Bridge as an MCP server in your AI client:
 
 ## Protocol
 
-The Bridge implements BRP RFC0001 (Draft). Key features:
+Full protocol reference: [docs/API.md](docs/API.md).
 
+Key features:
 - **JSON-RPC 2.0** message model (Request / Response / Notification / Error)
+- **23 extension methods** + 3 token management + lifecycle (initialize/shutdown)
 - **Session lifecycle**: Disconnected → Connecting → Authenticating → Ready → Closing → Closed
 - **Capability negotiation**: features + actions intersection
-- **Sequence numbering**: all notifications carry a monotonic sequence number
-- **Selector fallback chain**: nodeId → role → css → xpath → coordinate → text
-
-### Supported Actions (MVP)
-
-| Method | Description |
-|--------|-------------|
-| `initialize` | Negotiate session, version, capabilities |
-| `shutdown` / `exit` | Clean session termination |
-| `browser.list` | List all connected browsers |
-| `tab.list` | List all open tabs |
-| `tab.open` | Open new tab at URL |
-| `tab.close` | Close a tab |
-| `tab.select` | Switch to a tab |
-| `page.navigate` | Navigate to URL |
-| `page.getInteractionTree` | Get structured Interaction Tree |
-| `page.screenshot` | Capture visible tab screenshot |
-| `page.goBack` | Navigate back in history |
-| `page.goForward` | Navigate forward in history |
-| `page.reload` | Reload the current page |
-| `page.waitForSelector` | Wait for a CSS selector to appear |
-| `element.click` | Click an element |
-| `element.type` | Type text character by character |
-| `element.fill` | Set input value directly |
-| `element.scroll` | Scroll an element into view |
-| `element.hover` | Hover mouse over an element |
-| `element.select` | Select option in a dropdown |
-| `element.getAttribute` | Get an attribute or property value |
-| `keyboard.press` | Press a key or key combination |
-| `script.execute` | Execute JavaScript in page context |
-
-### Notifications
-
-| Event | Trigger |
-|-------|---------|
-| `notification/navigationStarted` | Page navigation begins |
-| `notification/navigationCompleted` | Page navigation finishes |
-| `notification/domChanged` | DOM mutation detected (debounced) |
+- **Permission model**: Tab check → Allowlist (B5) → Blacklist (E2) → User dialog (E1)
+- **error yellow**: tabGroup color on request failure (v0.7.0)
 
 ## Environment Variables
 
@@ -215,7 +206,8 @@ The Bridge implements BRP RFC0001 (Draft). Key features:
 | `BRP_AUTH_TOKEN` | _(auto-generated)_ | Override the auto-generated token. Bridge always requires a token; if unset, a UUID v4 is generated and written to the token file. |
 | `BRP_TOKEN_FILE` | Platform-specific | Override token file path (Windows: `%APPDATA%\brp-bridge\token`, Linux/macOS: `~/.brp-bridge-token`) |
 | `BRP_ALLOW_SCRIPT_EXECUTE` | `0` | Set to `1` to enable `script.execute` (disabled by default for security) |
-| `BRP_STANDALONE` | `0` | Set to `1` to run Bridge as pure WS server (no stdin/stdout) |
+| `BRP_MASTER_TOKEN` | `mt_{uuid}` | Master token for token management API (token.issue/revoke/list) |
+| `BRP_STANDALONE` | `0` | Set to `1` to run Bridge as pure WS server (no stdin/stdout, only extension connections) |
 | `RUST_LOG` | `info` | Log level (error/warn/info/debug/trace) |
 
 ## First-Run Authentication Setup
@@ -268,7 +260,7 @@ Requires **Rust ≥ 1.85** (due to `uuid` → `getrandom` 0.4.x) and **Node.js �
 # Rust Bridge
 cd bridge
 cargo run                    # Run bridge with debug logging
-cargo test                   # Run 22 unit tests
+cargo test                   # Run 56 unit tests
 cargo clippy --all-targets   # Lint check (must be zero warnings)
 
 # Extension (TypeScript)
@@ -276,7 +268,7 @@ cd extension
 npm ci                       # Install dependencies
 npm run typecheck            # Strict type check
 npm run build                # Bundle TS → JS
-npm test                     # Run 75 unit tests (Vitest)
+npm test                     # Run 255 unit tests (Vitest)
 ```
 
 Test Bridge with a JSON-RPC client:
@@ -287,30 +279,26 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 ## Testing
 
 ```bash
-# Bridge unit tests (23 tests, 29 with ts-rs export)
+# Bridge unit tests (56 tests)
 cd bridge && cargo test
 
-# Extension unit tests (75 tests, Vitest)
+# Extension unit tests (255 tests, Vitest)
 cd extension && npm test
 
-# Bridge lint
-cd bridge && cargo clippy --all-targets
+# Integration smoke tests (7 tests, Playwright)
+cd tests/integration && npm test
 
-# Bridge type bindings (ts-rs)
-# Generated at build time: bridge/bindings/*.d.ts
-cd bridge && cargo test  # 28 tests (includes 6 export_bindings_* tests)
+# Integration E2E tests (local Firefox + extension, xvfb in CI)
+cd tests/integration && npx playwright test --config=playwright.e2e.config.ts
 
-# Extension type check
+# TypeScript type check
 cd extension && npm run typecheck
 
-# Full E2E test requires Python 3:
-# 1. Starts Bridge with WS server
-# 2. Connects a simulated Extension via WebSocket
-# 3. Sends requests and verifies end-to-end flow
-python tests/test_e2e.py
+# Rust lint
+cd bridge && cargo clippy --all-targets
 ```
 
-E2E verified pipeline: `AI Client → stdin(Native Messaging) → Bridge → WebSocket → Extension → WebSocket → Bridge → stdout → AI Client`
+Test summary: Extension **255** | Bridge **56** | Integration **7** | E2E **6** | Total **324**
 
 ## License
 

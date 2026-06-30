@@ -58,6 +58,7 @@ MCP Client (Claude Desktop)
 - Fixed WS port (default 9817, configurable via `BRP_WS_ADDR`)
 - Token written to file, user must copy to extension Options
 - Manual configuration required
+- **B2 Multi-token**: Master token can issue/revoke client tokens via `token.issue`/`token.revoke`/`token.list` (see [API.md](API.md) §12)
 
 **Multi-instance limitation**:
 - Multiple MCP clients conflict on port 9817

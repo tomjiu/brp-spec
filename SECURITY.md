@@ -72,29 +72,26 @@ These exist in the codebase today.
   See [`docs/v0.4.0-B1-IMPLEMENTATION-PLAN.md`](docs/v0.4.0-B1-IMPLEMENTATION-PLAN.md)
   for security considerations.
 
-## 4. Known risks / hardening backlog
+## 4. Addressed risks (resolved in v0.3.0+)
 
-The following are **known gaps** being addressed by the roadmap in
-[`docs/SECURITY-ARCHITECTURE-DECISIONS.md`](docs/SECURITY-ARCHITECTURE-DECISIONS.md):
+The following risks from the original v0.3.0 hardening backlog have been addressed:
 
-- The WebSocket handshake does **not** yet validate the `Origin` header, so a
-  malicious page can reach the server (it still needs the token, but the socket
-  is reachable). — *P0*
-- The auth-token HTTP endpoint serves with `Access-Control-Allow-Origin: *`,
-  allowing cross-origin token theft. The plan removes this endpoint. — *P0*
-- No **server-side** connection rate limiting; a local loop can exhaust CPU/FDs
-  even when connections are ultimately rejected. — *P0*
-- No JSON-RPC message size / nesting-depth / array-length limits at the
-  transport and parse layers. — *P1*
-- `element.getAttribute("value")` can read autofilled password fields; redaction
-  currently exists only in the Interaction Tree, not on every read path. — *P1*
-- URL-scheme validation only guards `page.navigate`; indirect navigation
-  (clicking `file:`/`javascript:` links) is not globally intercepted. — *P1*
-- `script.execute` is enabled by default. — *P2*
-- Token comparison is not constant-time. — *P2* (becomes mandatory if a
-  long-lived Standalone token is introduced).
+- ✅ **Origin header validation** — WebSocket server validates `Origin` header on every connection, rejecting non-extension origins. Defends against CSWSH and DNS rebinding attacks. (v0.3.0)
+- ✅ **Server-side rate limiting** — Bridge limits connections to 10/second and caps concurrent unauthenticated connections at 5, applied before WebSocket upgrade. (v0.5.0)
+- ✅ **JSON-RPC message limits** — 4MB max message, 32-level JSON depth, 1024-element arrays. (v0.5.0)
+- ✅ **Constant-time token comparison** — `subtle::ConstantTimeEq` prevents timing attacks. (v0.5.0)
+- ✅ **Token Authentication (mandatory)** — Bridge always requires a token. Multi-token support (B2) allows issuing/revoking client tokens. (v0.5.0)
+- ✅ **script.execute disabled by default** — Requires `BRP_ALLOW_SCRIPT_EXECUTE=1` to enable. (v0.5.2)
+- ✅ **URL scheme guard** — `onBeforeNavigate` sentinel blocks `file:`, `javascript:`, `data:` schemes. (v0.5.0)
+- ✅ **Permission model (E1/E2/E5)** — User-granted permissions with auto-demote on denial, allowlist for trusted domains, blacklist for blocked domains. (v0.5.2)
+- ✅ **Auth-token HTTP endpoint removed** — Token never distributed over HTTP. (v0.3.0+)
 
-## 5. Out of scope (accepted residual risks for v0.3.0)
+## 5. Current hardening backlog (v0.8.0)
+
+- **element.getAttribute("value") redaction** — Redaction exists in Interaction Tree, but not on every read path. — P1
+- **URL scheme guard: indirect navigation** — `file:`/`javascript:` links via element.click not globally intercepted. — P1
+
+## 6. Out of scope (accepted residual risks for v0.3.0)
 
 These are explicitly **not** defended against in the current design. They are
 documented so reviewers do not mistake them for oversights:
@@ -106,7 +103,7 @@ documented so reviewers do not mistake them for oversights:
   file raises the bar but does not stop a process running as the same user (or
   root) from reading it.
 
-## 6. Security invariants
+## 7. Security invariants
 
 Every change to BRP must preserve these invariants. They are the non-negotiable
 rules the roadmap is built on:
