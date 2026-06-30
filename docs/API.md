@@ -85,6 +85,28 @@ Establish a session with the extension.
 
 **Capability Negotiation**: The bridge computes the intersection of client-requested actions and extension-supported actions (reported dynamically from `METHOD_ROUTES`). The returned `capabilities.actions` list is the negotiated set. After initialization, the bridge enforces these — calling a method outside the negotiated set returns `-32005 BRP_CAPABILITY_NOT_SUPPORTED`. If the client sends no capabilities, the bridge defaults to all extension-supported actions (backward compatible).
 
+### 2.1.1 Capability Enforcement
+
+After `initialize`, the Bridge enforces negotiated capabilities on all methods forwarded to the Extension. Methods handled locally by the Bridge (`initialize`, `shutdown`, `exit`, `token.*`, `browser.list`) are exempt from capability checks.
+
+If a client calls a method not in the negotiated capability set, the Bridge returns:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32005,
+    "message": "Method not supported by negotiated capabilities: {method}",
+    "data": {
+      "errorCode": "BRP_CAPABILITY_NOT_SUPPORTED",
+      "retriable": false,
+      "recoveryHint": "Check initialize response for supported actions"
+    }
+  }
+}
+```
+
 ### 2.2 shutdown
 
 Gracefully end a session.

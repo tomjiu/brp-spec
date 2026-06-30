@@ -478,7 +478,11 @@ mod tests {
             s.session.state = SessionState::Ready;
         }
 
-        let req = make_request(1, "page.navigate", Some(json!({"url": "https://example.com"})));
+        let req = make_request(
+            1,
+            "page.navigate",
+            Some(json!({"url": "https://example.com"})),
+        );
         let resp = handle_request(req, state, false, test_token_manager()).await;
         // Should NOT be -32005 (may fail at forward_to_extension with -32001 "No extension")
         if let Some(err) = resp.error {

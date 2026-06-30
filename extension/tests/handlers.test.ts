@@ -405,10 +405,18 @@ describe("handleInitialize", () => {
     }
   });
 
-  it("should have capabilities.actions matching METHOD_ROUTES keys", () => {
+  it("should have capabilities.actions matching METHOD_ROUTES minus lifecycle methods", () => {
     const result = BRP.handleInitialize({});
-    const routes = BRP.getKnownMethods();
+    const routes = BRP.getKnownMethods().filter(
+      m => m !== "initialize" && m !== "shutdown"
+    );
     expect(result.capabilities.actions.sort()).toEqual(routes.sort());
+  });
+
+  it("should exclude lifecycle methods from capabilities.actions", () => {
+    const result = BRP.handleInitialize({});
+    expect(result.capabilities.actions).not.toContain("initialize");
+    expect(result.capabilities.actions).not.toContain("shutdown");
   });
 
   it("should include tab.setControllable in capabilities actions", () => {

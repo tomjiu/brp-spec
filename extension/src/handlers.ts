@@ -150,6 +150,11 @@ export function getKnownMethods(): string[] {
 export function handleInitialize(params?: JsonObject): GeneratedInitializeResult {
   const testSeed = params?._testSeed;
   const protocolVersion = params?.protocolVersion;
+  // Filter out lifecycle methods handled locally by the Bridge —
+  // they are never forwarded to the Extension.
+  const supportedActions = Object.keys(METHOD_ROUTES).filter(
+    m => m !== "initialize" && m !== "shutdown"
+  );
   return {
     sessionId: "ext-" + (typeof testSeed === "string" ? testSeed : Math.random().toString(36).slice(2, 8)),
     protocolVersion: typeof protocolVersion === "string" ? protocolVersion : "0.1.0",
@@ -157,7 +162,7 @@ export function handleInitialize(params?: JsonObject): GeneratedInitializeResult
     serverInfo: { name: "brp-extension-gecko", version: "0.1.0" },
     capabilities: {
       features: ["interactionTree", "events", "screenshot"],
-      actions: Object.keys(METHOD_ROUTES),
+      actions: supportedActions,
       treeDeltaSupported: false,
       multiSession: false,
       maxRequestSize: null,

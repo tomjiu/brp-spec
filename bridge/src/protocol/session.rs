@@ -378,15 +378,26 @@ mod tests {
 
     #[test]
     fn test_wildcards_not_in_negotiated_set() {
-        // Wildcard actions like "page.*" / "tab.*" are in bridge_default capabilities
-        // but should NOT appear in negotiated_capabilities HashSet (only concrete methods)
-        let session = Session::new();
-        // After construction, negotiated_capabilities is empty (not initialized yet)
-        assert!(session.negotiated_capabilities.is_empty());
-        // But bridge_default capabilities include wildcards
+        // After initialize (with no client caps → accept all), bridge_default
+        // capabilities include wildcards like "page.*" / "tab.*", but
+        // negotiated_capabilities should only contain concrete method names.
+        let mut session = Session::new();
+        let params = InitializeParams {
+            protocol_version: "0.1.0".into(),
+            client_info: None,
+            capabilities: None,
+        };
+        session.initialize(&params);
+
+        // bridge_default capabilities contain wildcards
         assert!(session
             .capabilities
             .actions
+            .iter()
+            .any(|a| a.ends_with(".*")));
+        // negotiated_capabilities must NOT contain wildcards
+        assert!(!session
+            .negotiated_capabilities
             .iter()
             .any(|a| a.ends_with(".*")));
     }
