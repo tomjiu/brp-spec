@@ -38,95 +38,11 @@ log = logging.getLogger("brp-mcp")
 
 # ── Bridge Process State ──
 _bridge_proc: Optional[asyncio.subprocess.Process] = None
-_reuse_ws: Optional[any] = None  # websocket connection when reusing B1 Bridge
 _request_id = 0
 _pending: dict[int, asyncio.Future] = {}
 _initialized = False
 _reader_task: Optional[asyncio.Task] = None
 _bridge_auth_token: Optional[str] = None  # Captured from Bridge's authToken notification
-
-# ── Active Bridge Discovery ──
-
-
-def _active_bridge_path() -> str:
-    """Path to the active-bridge.json discovery file written by the Bridge."""
-    if sys.platform == "win32":
-        localappdata = os.environ.get("LOCALAPPDATA", ".")
-        return os.path.join(localappdata, "brp-bridge", "active-bridge.json")
-    home = os.environ.get("HOME", "/tmp")
-    return os.path.join(home, ".brp", "active-bridge.json")
-
-
-def _is_pid_alive(pid: int) -> bool:
-    """Check if a process with the given PID is alive (cross-platform)."""
-    if sys.platform == "win32":
-        import ctypes
-        from ctypes import wintypes
-        SYNCHRONIZE = 0x00100000
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        STILL_ACTIVE = 259
-
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(
-            SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid
-        )
-        if not handle:
-            return False
-        exit_code = wintypes.DWORD()
-        ret = kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
-        kernel32.CloseHandle(handle)
-        return ret != 0 and exit_code.value == STILL_ACTIVE
-    else:
-        try:
-            os.kill(pid, 0)
-            return True
-        except (OSError, ProcessLookupError):
-            return False
-
-
-async def _try_reuse_bridge() -> Optional[str]:
-    """Check active-bridge.json for an existing B1 Bridge.
-    Returns the WS URL if a live Bridge is found, None otherwise."""
-    path = _active_bridge_path()
-    if not os.path.exists(path):
-        return None
-
-    try:
-        with open(path, "r") as f:
-            data = json.load(f)
-    except Exception:
-        return None
-
-    pid = data.get("pid")
-    port = data.get("port")
-    loopback_secret = data.get("loopback_secret")
-    if not pid or not port or not loopback_secret:
-        return None
-
-    if not _is_pid_alive(pid):
-        log.info(
-            "[Discovery] Stale active-bridge.json (PID %d is dead), ignoring", pid
-        )
-        return None
-
-    # Try to connect to the WS port to verify it's reachable
-    try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection("127.0.0.1", port), timeout=2.0
-        )
-        writer.close()
-    except Exception:
-        log.info(
-            "[Discovery] Bridge PID %d on port %d not reachable, ignoring", pid, port
-        )
-        return None
-
-    log.info(
-        "[Discovery] Found live B1 Bridge (PID=%d, port=%d), reusing it", pid, port
-    )
-    global _bridge_auth_token
-    _bridge_auth_token = loopback_secret
-    return f"ws://127.0.0.1:{port}"
 
 
 async def ensure_bridge(bridge_path: str, ws_addr: str):
