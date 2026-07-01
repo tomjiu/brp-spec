@@ -204,6 +204,14 @@ impl SequenceCounter {
         Self { current: 0 }
     }
 
+    pub fn with_value(value: u64) -> Self {
+        Self { current: value }
+    }
+
+    pub fn current(&self) -> u64 {
+        self.current
+    }
+
     pub fn next(&mut self) -> u64 {
         self.current += 1;
         self.current
