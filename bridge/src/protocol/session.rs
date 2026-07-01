@@ -8,6 +8,91 @@ use std::collections::HashMap;
 use ts_rs::TS;
 use uuid::Uuid;
 
+// ─── Permission Model (v2) ───
+
+/// A single permission grant for a resource.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export, export_to = "../bindings/")]
+pub struct Permission {
+    pub resource: String,
+    pub read: bool,
+    pub write: bool,
+    pub delete: bool,
+}
+
+/// Collection of permission grants held by a session.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export, export_to = "../bindings/")]
+pub struct PermissionSet {
+    #[serde(default)]
+    pub permissions: Vec<Permission>,
+}
+
+impl PermissionSet {
+    pub fn check(&self, resource: &str, action: &str) -> bool {
+        self.permissions
+            .iter()
+            .find(|p| p.resource == resource)
+            .map(|p| match action {
+                "read" => p.read,
+                "write" => p.write,
+                "delete" => p.delete,
+                _ => p.write, // default to write for unrecognized actions
+            })
+            .unwrap_or(false)
+    }
+
+    pub fn grant(&mut self, resource: String, read: bool, write: bool, delete: bool) {
+        if let Some(pos) = self.permissions.iter().position(|p| p.resource == resource) {
+            let p = &mut self.permissions[pos];
+            p.read = read;
+            p.write = write;
+            p.delete = delete;
+        } else {
+            self.permissions.push(Permission {
+                resource,
+                read,
+                write,
+                delete,
+            });
+        }
+    }
+}
+
+/// Map a BRP method to (resource, action) for permission checking.
+pub fn method_permission(method: &str) -> Option<(&str, &str)> {
+    match method {
+        m if m.starts_with("cookie.") => Some(("cookie", action_for_cookie(m))),
+        "tab.close" => Some(("tab", "write")),
+        "script.execute" => Some(("script", "write")),
+        m if m.starts_with("clipboard.") => Some(("clipboard", action_for_generic(m))),
+        m if m.starts_with("downloads.") => Some(("downloads", action_for_generic(m))),
+        _ => None,
+    }
+}
+
+fn action_for_cookie(method: &str) -> &str {
+    if method.contains(".delete") || method.contains(".clear") {
+        "delete"
+    } else if method.contains(".set") || method.contains(".create") {
+        "write"
+    } else {
+        "read"
+    }
+}
+
+fn action_for_generic(method: &str) -> &str {
+    if method.contains(".read") || method.contains(".get") || method.contains(".list") {
+        "read"
+    } else if method.contains(".delete") || method.contains(".remove") {
+        "delete"
+    } else {
+        "write"
+    }
+}
+
 // ─── Session State ───
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -218,6 +303,7 @@ pub struct Session {
     pub negotiated_version: String,
     pub client_info: Option<ClientInfo>,
     pub capabilities: Capabilities,
+    pub permissions: PermissionSet,
     pub sequence: SequenceCounter,
 }
 
@@ -230,6 +316,7 @@ impl Session {
             negotiated_version: "0.1.0".into(),
             client_info: None,
             capabilities: Capabilities::bridge_default(),
+            permissions: PermissionSet::default(),
             sequence: SequenceCounter::new(),
         }
     }

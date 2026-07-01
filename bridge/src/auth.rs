@@ -45,6 +45,10 @@ pub const ALLOWED_METHODS: &[&str] = &[
     "token.issue",
     "token.revoke",
     "token.list",
+    // ── Permission Management (v2) ──
+    "permission.query",
+    "permission.request",
+    "permission.revoke",
 ];
 
 // ─── Origin Validation ───
