@@ -5,6 +5,7 @@
 /// States: Disconnected → Connecting → Authenticating → Ready → Busy → Closing → Closed
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::time::Instant;
 use ts_rs::TS;
 use uuid::Uuid;
 
@@ -285,6 +286,43 @@ impl Session {
     /// Get next sequence number for notifications
     pub fn next_sequence(&mut self) -> u64 {
         self.sequence.next()
+    }
+}
+
+// ─── Session Store (Session Recovery) ───
+
+/// Retains disconnected sessions for a configurable duration so a
+/// reconnecting Extension can pick up where it left off.
+pub struct SessionStore {
+    /// browser_id → (session, last_seen)
+    sessions: HashMap<String, (Session, Instant)>,
+    /// How long to keep a session after the Extension disconnects
+    retention: std::time::Duration,
+}
+
+impl SessionStore {
+    pub fn new() -> Self {
+        Self {
+            sessions: HashMap::new(),
+            retention: std::time::Duration::from_secs(30),
+        }
+    }
+
+    /// Remove and return a retained session if it hasn't expired.
+    pub fn take(&mut self, browser_id: &str) -> Option<Session> {
+        self.cleanup_expired();
+        self.sessions.remove(browser_id).map(|(s, _)| s)
+    }
+
+    /// Store a disconnected session for later recovery.
+    pub fn store(&mut self, browser_id: String, session: Session) {
+        self.sessions.insert(browser_id, (session, Instant::now()));
+    }
+
+    /// Remove sessions that have outlived the retention window.
+    pub fn cleanup_expired(&mut self) {
+        let cutoff = Instant::now() - self.retention;
+        self.sessions.retain(|_, (_, ts)| *ts > cutoff);
     }
 }
 

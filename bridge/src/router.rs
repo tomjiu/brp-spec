@@ -27,6 +27,8 @@ pub struct BridgeState {
     pub pending: HashMap<i64, (MessageId, oneshot::Sender<Response>, String)>,
     /// Internal request ID counter for extension communication
     next_ext_id: i64,
+    /// Retained sessions for recovery on reconnection
+    pub session_store: SessionStore,
 }
 
 impl BridgeState {
@@ -36,6 +38,7 @@ impl BridgeState {
             extensions: HashMap::new(),
             pending: HashMap::new(),
             next_ext_id: 10000,
+            session_store: SessionStore::new(),
         }
     }
 
@@ -53,6 +56,28 @@ impl BridgeState {
     pub fn remove_extension(&mut self, browser_id: &str) {
         log::warn!("[Bridge] Extension disconnected: {}", browser_id);
         self.extensions.remove(browser_id);
+        // Retain session for 30s — reconnecting extension can resume
+        self.session.state = SessionState::Disconnected;
+        let kept = Session {
+            id: self.session.id.clone(),
+            state: SessionState::Disconnected,
+            protocol_version: self.session.protocol_version.clone(),
+            negotiated_version: self.session.negotiated_version.clone(),
+            client_info: self.session.client_info.clone(),
+            capabilities: self.session.capabilities.clone(),
+            sequence: SequenceCounter::new(), // sequence is per-connection, start fresh on resume
+        };
+        self.session_store.store(browser_id.to_string(), kept);
+    }
+
+    pub fn restore_session(&mut self, browser_id: &str) -> Option<&Session> {
+        if let Some(kept) = self.session_store.take(browser_id) {
+            log::info!("[Bridge] Session recovered for {}", browser_id);
+            self.session = kept;
+            Some(&self.session)
+        } else {
+            None
+        }
     }
 
     pub fn get_sender<'a>(&'a self, browser_id: Option<&'a str>) -> Option<(&'a str, ExtSender)> {

@@ -155,10 +155,49 @@ async fn handle_ws_connection(
 
             let ext_sender = Arc::new(Mutex::new(tx));
 
+            // Check for session recovery: if a session with this browser_id
+            // was retained, restore it and notify the extension.
+            let was_resumed = {
+                let mut s = state.write().await;
+                let recovered = s.restore_session(&browser_id);
+                if let Some(recovered_session) = recovered {
+                    // Send notification/sessionResumed
+                    let notification = json!({
+                        "jsonrpc": "2.0",
+                        "method": "notification/sessionResumed",
+                        "params": {
+                            "browserId": browser_id,
+                            "sessionId": recovered_session.id,
+                            "capabilities": recovered_session.capabilities,
+                            "lastSequence": 0u64,
+                        }
+                    });
+                    let _ = ext_sender
+                        .lock()
+                        .await
+                        .send(WsMessage::Text(notification.to_string().into()))
+                        .await;
+                    log::info!(
+                        "[WsServer] Session resumed for {} (session: {})",
+                        browser_id,
+                        recovered_session.id
+                    );
+                    true
+                } else {
+                    false
+                }
+            };
+
             // Store the connection
             {
                 let mut s = state.write().await;
-                s.add_extension(browser_id.clone(), ext_sender);
+                if !was_resumed {
+                    // New session — only add if not already added by restore
+                    s.add_extension(browser_id.clone(), ext_sender.clone());
+                } else {
+                    // Session was restored — add extension to the restored session
+                    s.add_extension(browser_id.clone(), ext_sender);
+                }
             }
 
             // Handle incoming messages from extension
