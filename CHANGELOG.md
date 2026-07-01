@@ -9,22 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Capability Enforce** (PR #68): Bridge enforces negotiated capabilities, returns `BRP_CAPABILITY_NOT_SUPPORTED` (-32005). Session stores `negotiated_capabilities` as HashSet<O(1)>; router checks before forwarding to extension.
-- **Version Negotiation** (PR #69): Proper semver-based version negotiation. Pre-1.0: lower minor wins. Post-1.0: same major required. Invalid/empty versions fall back to bridge version.
-- **Session Recovery** (PR #70-71): Session ID reuse via `initialize` params, `lastSequence` in response, 30-second retention on disconnect, `notification/sessionResumed` on reconnect.
-- **Permission Model v2** (PR #72): Fine-grained permissions (read/write/delete) per resource (cookie, tab, script, clipboard, downloads). Bridge-side enforcement returns `BRP_PERMISSION_DENIED` (-32007). Methods: `permission.query`, `permission.request`, `permission.revoke`.
-- **Multi-Instance** (PR #73): Support multiple browser instances simultaneously via `instanceId`. Three-tier routing lookup (instanceId → browserId → first available). Backward compatible fallback.
+- **Capability Enforce** (PR #68): Bridge enforces negotiated capabilities, returns `BRP_CAPABILITY_NOT_SUPPORTED` (-32005).
+- **Version Negotiation** (PR #69): Semver-based version negotiation with same-major 1.x+ support.
+- **Unified Bridge Discovery** (PR #75): MCP adapter discovers and reuses existing B1 Bridge via lockfile + `register_client` WS.
+- **Error Category** (PR #75): All error responses include `category` field (AUTH/CAPABILITY/PERMISSION/TARGET/INTERNAL).
+- **Architecture docs**: ARCHITECTURE.md, RECOVERY_PROTOCOL.md, IMPLEMENTATION_GAP.md
 
 ### Changed
 
-- `extensions` HashMap key changed from `browser_id` to `instance_id`
-- `browser.list` response now includes `instanceId` per entry
-- `forward_to_extension` accepts optional `instanceId` parameter
+- **loopback bypass removed** (PR #75): All WS connections now require valid token, including localhost.
 
-### Backward Compatibility
-- All v0.8.x clients continue to work without changes
-- Old extensions without `instanceId` fall back to `browserId` behavior
-- Old clients without `sessionId` get new session as before
+### Fixed
+
+- **WS accept backoff**: 100ms sleep on accept error to prevent CPU spin (PR #75).
+- **unwrap elimination**: Replaced production `unwrap()` with `expect()` in router/ws_server/main (PR #75).
+- **v0.9.0 release**: PR #74 CHANGELOG + API + ROADMAP sync (now corrected to reflect actual merged content).
+- **AMO**: `data_collection_permissions` must be object (`{"required": ["none"]}`), `strict_min_version` 140.0 (PR #76).
+
+### Deferred (v1.0)
+
+- Session Recovery (#70-71): `sessionId` reuse + 30s retention
+- Permission Model v2 (#72): resource-level access control
+- Multi-Instance (#73): `instanceId` routing
 
 ## [0.8.0] — 2026-06-30
 
