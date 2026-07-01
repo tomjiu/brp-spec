@@ -242,7 +242,8 @@ async fn run_bootstrap() {
             log::info!("[Bootstrap] Ctrl+C received");
         }
         _ = tokio::task::spawn_blocking(|| {
-            let _ = std::io::stdin().read(&mut [0u8]);
+            let mut buf = [0u8; 1];
+            let _ = std::io::stdin().read(&mut buf);
         }) => {
             log::info!("[Bootstrap] stdin EOF — Firefox disconnected, exiting");
         }
