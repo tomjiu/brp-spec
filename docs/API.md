@@ -1,9 +1,17 @@
 # BRP Protocol API
 
-> **Status**: Stable (API Freeze v0.8.0)
+> **Status**: Stable (API Freeze v0.9.0)
+> **Protocol Version**: 0.9.0
 >
-> No breaking changes to methods, error codes, or message format.
+> No breaking changes to methods, error codes, or message format since v0.8.0.
 > New methods may be added (additive only).
+
+## New in v0.9.0
+- Capability Enforcement (§2.1.1): Bridge enforces negotiated capabilities
+- Version Negotiation (§2.1): Proper semver-based negotiation
+- Session Recovery (§2.1.3): Session ID reuse + 30s retention
+- Permission Model v2 (§7): Fine-grained permission control
+- Multi-Instance (§8): Multiple browser instances per Bridge
 
 ---
 

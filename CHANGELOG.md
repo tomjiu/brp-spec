@@ -5,6 +5,27 @@ All notable changes to the BRP (Browser Runtime Protocol) project are documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-07-01
+
+### Added
+
+- **Capability Enforce** (PR #68): Bridge enforces negotiated capabilities, returns `BRP_CAPABILITY_NOT_SUPPORTED` (-32005). Session stores `negotiated_capabilities` as HashSet<O(1)>; router checks before forwarding to extension.
+- **Version Negotiation** (PR #69): Proper semver-based version negotiation. Pre-1.0: lower minor wins. Post-1.0: same major required. Invalid/empty versions fall back to bridge version.
+- **Session Recovery** (PR #70-71): Session ID reuse via `initialize` params, `lastSequence` in response, 30-second retention on disconnect, `notification/sessionResumed` on reconnect.
+- **Permission Model v2** (PR #72): Fine-grained permissions (read/write/delete) per resource (cookie, tab, script, clipboard, downloads). Bridge-side enforcement returns `BRP_PERMISSION_DENIED` (-32007). Methods: `permission.query`, `permission.request`, `permission.revoke`.
+- **Multi-Instance** (PR #73): Support multiple browser instances simultaneously via `instanceId`. Three-tier routing lookup (instanceId → browserId → first available). Backward compatible fallback.
+
+### Changed
+
+- `extensions` HashMap key changed from `browser_id` to `instance_id`
+- `browser.list` response now includes `instanceId` per entry
+- `forward_to_extension` accepts optional `instanceId` parameter
+
+### Backward Compatibility
+- All v0.8.x clients continue to work without changes
+- Old extensions without `instanceId` fall back to `browserId` behavior
+- Old clients without `sessionId` get new session as before
+
 ## [0.8.0] — 2026-06-30
 
 ### Release Workflow
