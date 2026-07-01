@@ -5,6 +5,7 @@
 /// States: Disconnected → Connecting → Authenticating → Ready → Busy → Closing → Closed
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::time::Instant;
 use ts_rs::TS;
 use uuid::Uuid;
 
@@ -203,6 +204,14 @@ impl SequenceCounter {
         Self { current: 0 }
     }
 
+    pub fn with_value(value: u64) -> Self {
+        Self { current: value }
+    }
+
+    pub fn current(&self) -> u64 {
+        self.current
+    }
+
     pub fn next(&mut self) -> u64 {
         self.current += 1;
         self.current
@@ -288,6 +297,43 @@ impl Session {
     }
 }
 
+// ─── Session Store (Session Recovery) ───
+
+/// Retains disconnected sessions for a configurable duration so a
+/// reconnecting Extension can pick up where it left off.
+pub struct SessionStore {
+    /// browser_id → (session, last_seen)
+    sessions: HashMap<String, (Session, Instant)>,
+    /// How long to keep a session after the Extension disconnects
+    retention: std::time::Duration,
+}
+
+impl SessionStore {
+    pub fn new() -> Self {
+        Self {
+            sessions: HashMap::new(),
+            retention: std::time::Duration::from_secs(30),
+        }
+    }
+
+    /// Remove and return a retained session if it hasn't expired.
+    pub fn take(&mut self, browser_id: &str) -> Option<Session> {
+        self.cleanup_expired();
+        self.sessions.remove(browser_id).map(|(s, _)| s)
+    }
+
+    /// Store a disconnected session for later recovery.
+    pub fn store(&mut self, browser_id: String, session: Session) {
+        self.sessions.insert(browser_id, (session, Instant::now()));
+    }
+
+    /// Remove sessions that have outlived the retention window.
+    pub fn cleanup_expired(&mut self) {
+        let cutoff = Instant::now() - self.retention;
+        self.sessions.retain(|_, (_, ts)| *ts > cutoff);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,5 +362,57 @@ mod tests {
         assert!(pre2.tag_name.is_none());
         assert!(pre2.text_contains.is_none());
         assert!(pre2.attributes.is_none());
+    }
+
+    // ── Sequence Counter Tests ──
+
+    #[test]
+    fn test_sequence_counter_current() {
+        let seq = SequenceCounter::new();
+        assert_eq!(seq.current(), 0);
+    }
+
+    #[test]
+    fn test_sequence_counter_with_value() {
+        let seq = SequenceCounter::with_value(42);
+        assert_eq!(seq.current(), 42);
+    }
+
+    #[test]
+    fn test_sequence_counter_next_increments() {
+        let mut seq = SequenceCounter::new();
+        assert_eq!(seq.current(), 0);
+        assert_eq!(seq.next(), 1);
+        assert_eq!(seq.current(), 1);
+    }
+
+    #[test]
+    fn test_sequence_preserved_in_store() {
+        // Simulate remove_extension: store session with current sequence
+        let mut store = SessionStore::new();
+        let mut session = Session::new();
+        session.sequence.next(); // seq = 1
+        session.sequence.next(); // seq = 2
+        assert_eq!(session.sequence.current(), 2);
+
+        // Store with preserved sequence
+        let kept = Session {
+            id: session.id.clone(),
+            state: SessionState::Disconnected,
+            protocol_version: session.protocol_version.clone(),
+            negotiated_version: session.negotiated_version.clone(),
+            client_info: session.client_info.clone(),
+            capabilities: session.capabilities.clone(),
+            sequence: SequenceCounter::with_value(session.sequence.current()),
+        };
+        store.store("firefox".into(), kept);
+
+        // Recover and verify sequence preserved
+        let mut recovered = store.take("firefox").unwrap();
+        assert_eq!(recovered.sequence.current(), 2);
+
+        // restore_session should set Ready
+        recovered.state = SessionState::Ready;
+        assert!(recovered.is_ready(), "restored session should be Ready");
     }
 }

@@ -29,6 +29,7 @@ const RECONNECT_MAX_DELAY = 10000;
 
 let ws: WebSocket | null = null;
 let reconnectAttempts = 0;
+let lastSessionId: string | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let authenticated = false;
 const controllableTabs = new Set<number>();
@@ -90,6 +91,19 @@ browser.tabs.onRemoved.addListener((tabId: number): void => {
   controllableTabs.delete(tabId);
   updateBadge(controllableTabs.size);
 });
+
+async function loadSessionId(): Promise<void> {
+  try {
+    const result = await browser.storage.local.get("brpSessionId");
+    const sid = result.brpSessionId;
+    if (typeof sid === "string" && sid) {
+      lastSessionId = sid;
+      console.log("[BRP] Loaded last session:", sid);
+    }
+  } catch (error: unknown) {
+    console.warn("[BRP] Could not read stored sessionId:", errorMessage(error));
+  }
+}
 
 async function getAuthToken(): Promise<string | null> {
   try {
@@ -198,12 +212,14 @@ function setupConnection(socket: WebSocket): void {
       params: {
         browserId: browserName,
         token: token || "",
+        sessionId: lastSessionId || undefined,  // for session recovery
         userAgent: navigator.userAgent,
         extensionVersion: "0.4.1",
       },
     });
     socket.send(registerMsg);
-    console.log("[BRP] Registering as:", browserName, token ? "(with token)" : "(no token — Origin-only auth)");
+    console.log("[BRP] Registering as:", browserName, token ? "(with token)" : "(no token — Origin-only auth)",
+      lastSessionId ? `(resuming ${lastSessionId})` : "");
   };
 
   socket.onopen = (): void => {
@@ -220,6 +236,20 @@ function setupConnection(socket: WebSocket): void {
       if (!authenticated && isJsonObject(msg.error)) {
         console.error("[BRP] Bridge rejected registration:", getString(msg.error, "message"));
         socket.close(4001, "Auth failed");
+        return;
+      }
+
+      // Handle notification/sessionResumed
+      if (msg.method === "notification/sessionResumed" && isJsonObject(msg.params)) {
+        const sid = getString(msg.params, "sessionId");
+        if (sid) {
+          lastSessionId = sid;
+          console.log("[BRP] Session resumed:", sid);
+          void browser.storage.local.set({ brpSessionId: sid });
+        }
+        authenticated = true;
+        onBridgeConnect();
+        console.log("[BRP] ← notification/sessionResumed");
         return;
       }
 
@@ -925,4 +955,4 @@ function extractDomainFromParams(params?: JsonObject): string | undefined {
   }
 }
 
-void connect();
+void loadSessionId().then(() => void connect());

@@ -402,8 +402,12 @@ async fn run_bridge() {
         }
 
         let s = state.read().await;
-        if s.session.state == SessionState::Closed {
-            log::info!("[Bridge] Session closed — goodbye");
+        if !s.sessions.is_empty()
+            && s.sessions
+                .values()
+                .all(|ses| ses.state == SessionState::Closed)
+        {
+            log::info!("[Bridge] All sessions closed — goodbye");
             break;
         }
     }
