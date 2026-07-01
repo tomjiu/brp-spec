@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "BRP Bridge Extension",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Browser Runtime Protocol - Firefox Extension for AI agent interaction",
   "permissions": [
     "activeTab",
@@ -13,6 +13,13 @@
     "tabGroups"
   ],
   "optional_permissions": ["history"],
+  "icons": {
+    "16": "icons/brp-icon-16.png",
+    "32": "icons/brp-icon-32.png",
+    "48": "icons/brp-icon-48.png",
+    "96": "icons/brp-icon-96.png",
+    "128": "icons/brp-icon-128.png"
+  },
   "background": {
     "scripts": [
       "dist/handlers.js",
@@ -48,7 +55,8 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "brp-bridge@brp-spec.org",
-      "strict_min_version": "109.0"
+      "strict_min_version": "139.0",
+      "data_collection_permissions": []
     }
   }
 }

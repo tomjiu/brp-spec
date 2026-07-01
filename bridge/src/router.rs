@@ -96,7 +96,7 @@ pub async fn handle_request(
                         code: -32001,
                         message: e.into(),
                         data: Some(
-                            json!({"errorCode": "BRP_MASTER_TOKEN_REQUIRED", "retriable": false}),
+                            json!({"errorCode": "BRP_MASTER_TOKEN_REQUIRED", "category": "AUTH", "retriable": false}),
                         ),
                     },
                 ),
@@ -121,7 +121,7 @@ pub async fn handle_request(
                         code: -32001,
                         message: e.into(),
                         data: Some(
-                            json!({"errorCode": if e.contains("Master token") { "BRP_MASTER_TOKEN_REQUIRED" } else { "BRP_TOKEN_REVOKE_FAILED" }, "retriable": false}),
+                            json!({"errorCode": if e.contains("Master token") { "BRP_MASTER_TOKEN_REQUIRED" } else { "BRP_TOKEN_REVOKE_FAILED" }, "category": "AUTH", "retriable": false}),
                         ),
                     },
                 ),
@@ -141,7 +141,7 @@ pub async fn handle_request(
                         code: -32001,
                         message: e.into(),
                         data: Some(
-                            json!({"errorCode": "BRP_MASTER_TOKEN_REQUIRED", "retriable": false}),
+                            json!({"errorCode": "BRP_MASTER_TOKEN_REQUIRED", "category": "AUTH", "retriable": false}),
                         ),
                     },
                 ),
@@ -162,7 +162,11 @@ pub async fn handle_request(
 
             let mut s = state.write().await;
             let result = s.session.initialize(&params);
-            Response::success(id, serde_json::to_value(result).unwrap())
+            Response::success(
+                id,
+                serde_json::to_value(result)
+                    .expect("InitializeResult serialization should not fail"),
+            )
         }
 
         "shutdown" => {
@@ -197,6 +201,7 @@ pub async fn handle_request(
                         message: format!("Unknown method: {}", method),
                         data: Some(json!({
                             "errorCode": error_codes::BRP_METHOD_NOT_FOUND,
+                            "category": "CAPABILITY",
                             "retriable": false
                         })),
                     },
@@ -227,6 +232,7 @@ pub async fn handle_request(
                                 data: Some(json!({
                                     "errorCode":
                                         error_codes::BRP_CAPABILITY_NOT_SUPPORTED,
+                                    "category": "CAPABILITY",
                                     "retriable": false,
                                     "recoveryHint":
                                         "Check initialize response for supported actions"
@@ -260,6 +266,7 @@ pub async fn handle_request(
                                 ),
                                 data: Some(json!({
                                     "errorCode": "BRP_URL_SCHEME_BLOCKED",
+                                    "category": "PERMISSION",
                                     "retriable": false
                                 })),
                             },
@@ -277,6 +284,7 @@ pub async fn handle_request(
                             .into(),
                     data: Some(json!({
                         "errorCode": error_codes::BRP_PERMISSION_DENIED,
+                        "category": "PERMISSION",
                         "retriable": false,
                         "recoveryHint": "Set environment variable BRP_ALLOW_SCRIPT_EXECUTE=1 before starting the Bridge"
                     })),
@@ -294,6 +302,7 @@ pub async fn handle_request(
                             message: "Session not initialized".into(),
                             data: Some(json!({
                                 "errorCode": error_codes::BRP_SESSION_UNINITIALIZED,
+                                "category": "INTERNAL",
                                 "retriable": false
                             })),
                         },
@@ -327,6 +336,7 @@ pub async fn forward_to_extension(req: Request, state: Arc<RwLock<BridgeState>>)
                         message: "No extension connected".into(),
                         data: Some(json!({
                             "errorCode": "BRP_EXTENSION_DISCONNECTED",
+                            "category": "TARGET",
                             "retriable": true,
                             "recoveryHint": "Install the BRP extension in Firefox/Zen and ensure it is running"
                         })),
@@ -372,6 +382,7 @@ pub async fn forward_to_extension(req: Request, state: Arc<RwLock<BridgeState>>)
                 message: "Request too large to forward".into(),
                 data: Some(json!({
                     "errorCode": "BRP_MESSAGE_TOO_LARGE",
+                    "category": "INTERNAL",
                     "retriable": false,
                     "size": ext_msg_str.len(),
                     "maxSize": MAX_MESSAGE_SIZE
@@ -411,6 +422,7 @@ pub async fn forward_to_extension(req: Request, state: Arc<RwLock<BridgeState>>)
                     message: format!("Extension request timed out ({}s)", timeout_secs),
                     data: Some(json!({
                         "errorCode": "BRP_TIMEOUT",
+                        "category": "INTERNAL",
                         "retriable": true
                     })),
                 },
@@ -419,7 +431,6 @@ pub async fn forward_to_extension(req: Request, state: Arc<RwLock<BridgeState>>)
     }
 }
 
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

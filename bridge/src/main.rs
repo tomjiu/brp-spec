@@ -100,7 +100,7 @@ async fn run_echo() {
         }
     })
     .await
-    .unwrap();
+    .expect("echo mode task panicked");
 }
 
 // ─── Bootstrap Mode (Firefox connectNative token delivery) ───
@@ -138,6 +138,7 @@ async fn run_bootstrap() {
     };
 
     // ── 2. Start WebSocket server on port 0 (OS-assigned port) ──
+    let allow_script_execute = config.allow_script_execute;
     let state = Arc::new(RwLock::new(BridgeState::new()));
     let token_manager = Arc::new(TokenManager::new(
         config.master_token.clone(),
@@ -181,6 +182,7 @@ async fn run_bootstrap() {
                     state,
                     notify_tx,
                     ws_connected_tx,
+                    allow_script_execute,
                 )
                 .await;
             });
@@ -193,6 +195,7 @@ async fn run_bootstrap() {
     let lock_data = lockfile::LockData {
         pid: std::process::id(),
         port: ws_addr.port(),
+        token: Some(config.auth_token.clone()),
     };
     if let Err(e) = lockfile::acquire(lock_data.clone()) {
         log::error!("[Bootstrap] Failed to acquire lockfile: {}", e);
@@ -307,6 +310,7 @@ async fn run_bridge() {
     let (request_tx, mut request_rx) = mpsc::channel::<Request>(32);
 
     // ── WebSocket Server ──
+    let allow_script_execute = config.allow_script_execute;
     let use_random_port = config.ws_addr.ends_with(":0");
 
     if use_random_port {
@@ -341,8 +345,15 @@ async fn run_bridge() {
         let notify_tx = notify_tx.clone();
         let token_manager = token_manager.clone();
         tokio::spawn(async move {
-            ws_server::run_ws_server_from_listener(listener, token_manager, state, notify_tx, None)
-                .await;
+            ws_server::run_ws_server_from_listener(
+                listener,
+                token_manager,
+                state,
+                notify_tx,
+                None,
+                allow_script_execute,
+            )
+            .await;
         });
     } else {
         let state = state.clone();
@@ -350,7 +361,14 @@ async fn run_bridge() {
         let ws_addr = config.ws_addr.clone();
         let token_manager = token_manager.clone();
         tokio::spawn(async move {
-            ws_server::run_ws_server(&ws_addr, token_manager, state, notify_tx).await;
+            ws_server::run_ws_server(
+                &ws_addr,
+                token_manager,
+                state,
+                notify_tx,
+                allow_script_execute,
+            )
+            .await;
         });
     }
 

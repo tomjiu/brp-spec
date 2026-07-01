@@ -13,7 +13,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use crate::auth::{validate_json_depth, OriginValidator, MAX_JSON_DEPTH, MAX_MESSAGE_SIZE};
 use crate::protocol::*;
 use crate::ratelimit::RateLimiter;
-use crate::router::BridgeState;
+use crate::router::{self, BridgeState};
 use crate::token_manager::TokenManager;
 
 /// Sender half of the extension WebSocket connection (shared across tasks).
@@ -33,6 +33,7 @@ pub async fn run_ws_server(
     token_manager: Arc<TokenManager>,
     state: Arc<RwLock<BridgeState>>,
     notify_tx: mpsc::Sender<Value>,
+    allow_script_execute: bool,
 ) {
     let listener = match TcpListener::bind(addr).await {
         Ok(l) => l,
@@ -43,7 +44,15 @@ pub async fn run_ws_server(
     };
 
     log::info!("[WsServer] Listening on {} for Firefox Extension...", addr);
-    run_accept_loop(listener, token_manager, state, notify_tx, None).await;
+    run_accept_loop(
+        listener,
+        token_manager,
+        state,
+        notify_tx,
+        None,
+        allow_script_execute,
+    )
+    .await;
 }
 
 /// Start the WebSocket server from a pre-bound TcpListener.
@@ -57,12 +66,21 @@ pub async fn run_ws_server_from_listener(
     state: Arc<RwLock<BridgeState>>,
     notify_tx: mpsc::Sender<Value>,
     ws_connected_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    allow_script_execute: bool,
 ) {
     let addr = listener
         .local_addr()
         .expect("bound listener should have addr");
     log::info!("[WsServer] Listening on {} for Firefox Extension...", addr);
-    run_accept_loop(listener, token_manager, state, notify_tx, ws_connected_tx).await;
+    run_accept_loop(
+        listener,
+        token_manager,
+        state,
+        notify_tx,
+        ws_connected_tx,
+        allow_script_execute,
+    )
+    .await;
 }
 
 async fn run_accept_loop(
@@ -71,6 +89,7 @@ async fn run_accept_loop(
     state: Arc<RwLock<BridgeState>>,
     notify_tx: mpsc::Sender<Value>,
     mut ws_connected_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    allow_script_execute: bool,
 ) {
     log::info!("[WsServer] Token authentication ENABLED (mandatory)");
 
@@ -113,18 +132,23 @@ async fn run_accept_loop(
                         state,
                         notify_tx,
                         rate_limiter,
+                        allow_script_execute,
                     )
                     .await;
                 });
             }
             Err(e) => {
                 log::error!("[WsServer] Accept error: {}", e);
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             }
         }
     }
 }
 
 /// Handle a single WebSocket connection: accept, register, and process messages.
+/// Supports two connection types:
+///   - Extension: sends `register` with browserId → receives forwarded requests
+///   - Client (MCP adapter): sends `register_client` with token → sends JSON-RPC requests directly
 async fn handle_ws_connection(
     stream: tokio::net::TcpStream,
     peer: std::net::SocketAddr,
@@ -132,6 +156,7 @@ async fn handle_ws_connection(
     state: Arc<RwLock<BridgeState>>,
     notify_tx: mpsc::Sender<Value>,
     rate_limiter: Arc<Mutex<RateLimiter>>,
+    allow_script_execute: bool,
 ) {
     let ws_result = tokio_tungstenite::accept_hdr_async(stream, OriginValidator).await;
 
@@ -139,57 +164,93 @@ async fn handle_ws_connection(
         Ok(ws_stream) => {
             let (mut tx, mut receiver) = ws_stream.split();
 
-            // Wait for registration message (10s timeout)
-            let browser_id = match register_extension(
-                &mut receiver,
-                &mut tx,
-                &token_manager,
-                &rate_limiter,
-                peer,
-            )
-            .await
-            {
-                Some(id) => id,
+            // Peek at the first message to determine connection type
+            let first_msg = match peek_first_message(&mut receiver, &rate_limiter, peer).await {
+                Some(msg) => msg,
                 None => return,
             };
 
-            let ext_sender = Arc::new(Mutex::new(tx));
+            // Check if this is a client (register_client) or extension (register)
+            let is_client =
+                first_msg.get("method").and_then(|m| m.as_str()) == Some("register_client");
 
-            // Store the connection
-            {
-                let mut s = state.write().await;
-                s.add_extension(browser_id.clone(), ext_sender);
-            }
+            if is_client {
+                // ── Client connection (MCP adapter via Discovery) ──
+                if !authenticate_client(&first_msg, &token_manager, &rate_limiter, peer).await {
+                    let _ = tx
+                        .send(WsMessage::Text(
+                            json!({"error":{"code":-32001,"message":"Authentication failed"}})
+                                .to_string()
+                                .into(),
+                        ))
+                        .await;
+                    let _ = tx.send(WsMessage::Close(None)).await;
+                    return;
+                }
+                log::info!("[WsServer] MCP client authenticated from {}", peer);
+                rate_limiter.lock().await.on_authenticated();
 
-            // Handle incoming messages from extension
-            handle_ext_messages(&browser_id, receiver, state.clone(), notify_tx).await;
+                // Handle JSON-RPC requests from this client
+                handle_client_messages(
+                    receiver,
+                    tx,
+                    state,
+                    notify_tx,
+                    allow_script_execute,
+                    token_manager,
+                )
+                .await;
+            } else {
+                // ── Extension connection (existing flow) ──
+                // Re-inject the first message for register_extension to process
+                let browser_id = match register_extension_from_msg(
+                    first_msg,
+                    &token_manager,
+                    &rate_limiter,
+                    peer,
+                )
+                .await
+                {
+                    Some(id) => id,
+                    None => return,
+                };
 
-            // Extension disconnected — fail all pending requests for this browser
-            {
-                let mut s = state.write().await;
-                s.remove_extension(&browser_id);
+                let ext_sender = Arc::new(Mutex::new(tx));
 
-                let failed_ids: Vec<i64> = s
-                    .pending
-                    .iter()
-                    .filter(|(_, (_, _, bid))| bid == &browser_id)
-                    .map(|(id, _)| *id)
-                    .collect();
+                {
+                    let mut s = state.write().await;
+                    s.add_extension(browser_id.clone(), ext_sender);
+                }
 
-                for ext_id in failed_ids {
-                    if let Some((client_id, tx, _)) = s.pending.remove(&ext_id) {
-                        let err_resp = Response::error(
-                            client_id,
-                            ErrorResponse {
-                                code: -32001,
-                                message: "Extension disconnected during request".into(),
-                                data: Some(json!({
-                                    "errorCode": "BRP_EXTENSION_DISCONNECTED",
-                                    "retriable": true
-                                })),
-                            },
-                        );
-                        let _ = tx.send(err_resp);
+                handle_ext_messages(&browser_id, receiver, state.clone(), notify_tx).await;
+
+                // Extension disconnected — fail all pending requests
+                {
+                    let mut s = state.write().await;
+                    s.remove_extension(&browser_id);
+
+                    let failed_ids: Vec<i64> = s
+                        .pending
+                        .iter()
+                        .filter(|(_, (_, _, bid))| bid == &browser_id)
+                        .map(|(id, _)| *id)
+                        .collect();
+
+                    for ext_id in failed_ids {
+                        if let Some((client_id, tx, _)) = s.pending.remove(&ext_id) {
+                            let err_resp = Response::error(
+                                client_id,
+                                ErrorResponse {
+                                    code: -32001,
+                                    message: "Extension disconnected during request".into(),
+                                    data: Some(json!({
+                                        "errorCode": "BRP_EXTENSION_DISCONNECTED",
+                                        "retriable": true
+                                    })),
+                                },
+                            );
+                            let _ = tx.send(err_resp);
+                        }
                     }
                 }
             }
@@ -201,22 +262,14 @@ async fn handle_ws_connection(
     }
 }
 
-/// Wait for and validate the extension registration message.
-/// Returns the browser_id on success, or None (connection closed) on failure.
-async fn register_extension(
+/// Read the first text message from a WS stream (with 10s timeout).
+async fn peek_first_message(
     receiver: &mut futures_util::stream::SplitStream<
         tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
     >,
-    tx: &mut futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
-        WsMessage,
-    >,
-    token_manager: &Arc<TokenManager>,
     rate_limiter: &Arc<Mutex<RateLimiter>>,
     peer: std::net::SocketAddr,
-) -> Option<String> {
-    use tokio_tungstenite::tungstenite::Message as WsMessage;
-
+) -> Option<Value> {
     let text = match tokio::time::timeout(std::time::Duration::from_secs(10), receiver.next()).await
     {
         Ok(Some(Ok(WsMessage::Text(t)))) => t,
@@ -235,16 +288,13 @@ async fn register_extension(
         }
         Err(_) => {
             log::warn!("[WsServer] Registration timeout from {}", peer);
-            let _ = tx.send(WsMessage::Close(None)).await;
             rate_limiter.lock().await.on_auth_failed();
             return None;
         }
     };
 
-    // Check message size
     if text.len() > MAX_MESSAGE_SIZE {
         log::warn!("[WsServer] Registration message too large from {}", peer);
-        let _ = tx.send(WsMessage::Close(None)).await;
         rate_limiter.lock().await.on_auth_failed();
         return None;
     }
@@ -253,56 +303,70 @@ async fn register_extension(
         Ok(v) => v,
         Err(_) => {
             log::warn!("[WsServer] Invalid JSON in registration from {}", peer);
-            let _ = tx.send(WsMessage::Close(None)).await;
             rate_limiter.lock().await.on_auth_failed();
             return None;
         }
     };
 
-    // Validate JSON depth
     if !validate_json_depth(&v, MAX_JSON_DEPTH) {
         log::warn!("[WsServer] Registration message too deep from {}", peer);
-        let _ = tx.send(WsMessage::Close(None)).await;
         rate_limiter.lock().await.on_auth_failed();
         return None;
     }
 
-    // Must be a register message
-    if v.get("method").and_then(|m| m.as_str()) != Some("register") {
-        log::warn!("[WsServer] First message is not a register, rejecting");
-        let _ = tx.send(WsMessage::Close(None)).await;
-        rate_limiter.lock().await.on_auth_failed();
-        return None;
-    }
+    Some(v)
+}
 
-    // Token validation
-    let provided_token = v
+/// Authenticate a client (register_client) message.
+async fn authenticate_client(
+    msg: &Value,
+    token_manager: &Arc<TokenManager>,
+    rate_limiter: &Arc<Mutex<RateLimiter>>,
+    peer: std::net::SocketAddr,
+) -> bool {
+    let provided_token = msg
         .get("params")
         .and_then(|p| p.get("token"))
         .and_then(|t| t.as_str())
         .unwrap_or("");
 
-    // Bridge-mode: localhost WS connections skip token validation entirely.
-    // In Bridge mode the MCP adapter controls the bridge lifecycle — the
-    // extension connects directly without going through B1's token-delivery.
-    let skip_auth = peer.ip().is_loopback();
+    if !token_manager.is_valid_token(provided_token).await {
+        log::warn!("[WsServer] Client AUTH FAILED from {}", peer);
+        rate_limiter.lock().await.on_auth_failed();
+        return false;
+    }
+    true
+}
 
-    if !skip_auth && !token_manager.is_valid_token(provided_token).await {
-        log::warn!("[WsServer] AUTH FAILED from {} (token mismatch)", peer);
-        let err_msg = json!({
-            "jsonrpc": "2.0",
-            "error": {
-                "code": -32001,
-                "message": "Authentication failed: invalid token"
-            }
-        });
-        let _ = tx.send(WsMessage::Text(err_msg.to_string().into())).await;
-        let _ = tx.send(WsMessage::Close(None)).await;
+/// Process a register message that was already peeked.
+/// Returns the browser_id on success.
+async fn register_extension_from_msg(
+    msg: Value,
+    token_manager: &Arc<TokenManager>,
+    rate_limiter: &Arc<Mutex<RateLimiter>>,
+    peer: std::net::SocketAddr,
+) -> Option<String> {
+    // Must be a register message
+    if msg.get("method").and_then(|m| m.as_str()) != Some("register") {
+        log::warn!("[WsServer] First message is not register/register_client, rejecting");
         rate_limiter.lock().await.on_auth_failed();
         return None;
     }
 
-    let bid = v
+    // Token validation
+    let provided_token = msg
+        .get("params")
+        .and_then(|p| p.get("token"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+
+    if !token_manager.is_valid_token(provided_token).await {
+        log::warn!("[WsServer] AUTH FAILED from {} (token mismatch)", peer);
+        rate_limiter.lock().await.on_auth_failed();
+        return None;
+    }
+
+    let bid = msg
         .get("params")
         .and_then(|p| p.get("browserId"))
         .and_then(|b| b.as_str())
@@ -310,9 +374,87 @@ async fn register_extension(
         .to_string();
 
     log::info!("[WsServer] Extension authenticated: {} from {}", bid, peer);
-
     rate_limiter.lock().await.on_authenticated();
     Some(bid)
+}
+
+/// Handle JSON-RPC requests from a WS client (MCP adapter).
+/// Each request is routed through the router; responses are sent back over WS.
+async fn handle_client_messages(
+    mut receiver: futures_util::stream::SplitStream<
+        tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    >,
+    mut tx: futures_util::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+        WsMessage,
+    >,
+    state: Arc<RwLock<BridgeState>>,
+    _notify_tx: mpsc::Sender<Value>,
+    allow_script_execute: bool,
+    token_manager: Arc<TokenManager>,
+) {
+    while let Some(msg) = receiver.next().await {
+        let text = match msg {
+            Ok(WsMessage::Text(t)) => t,
+            Ok(WsMessage::Close(_)) => {
+                log::info!("[WsServer] MCP client disconnected");
+                break;
+            }
+            Ok(_) => continue,
+            Err(e) => {
+                log::warn!("[WsServer] MCP client WS error: {}", e);
+                break;
+            }
+        };
+
+        if text.len() > MAX_MESSAGE_SIZE {
+            let err = json!({
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": -32000,
+                    "message": "Message too large",
+                    "data": {"errorCode": "BRP_MESSAGE_TOO_LARGE", "retriable": false}
+                }
+            });
+            let _ = tx.send(WsMessage::Text(err.to_string().into())).await;
+            continue;
+        }
+
+        let req_value: Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Parse as a JSON-RPC Request
+        let req: Request = match serde_json::from_value(req_value) {
+            Ok(r) => r,
+            Err(e) => {
+                let err = json!({
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": format!("Invalid request: {}", e)}
+                });
+                let _ = tx.send(WsMessage::Text(err.to_string().into())).await;
+                continue;
+            }
+        };
+
+        // Route through the router (same as stdin mode)
+        let response = router::handle_request(
+            req,
+            state.clone(),
+            allow_script_execute,
+            token_manager.clone(),
+        )
+        .await;
+
+        if let Ok(resp_value) = serde_json::to_value(&response) {
+            let resp_str = resp_value.to_string();
+            if let Err(e) = tx.send(WsMessage::Text(resp_str.into())).await {
+                log::warn!("[WsServer] Failed to send response to MCP client: {}", e);
+                break;
+            }
+        }
+    }
 }
 
 /// Process incoming messages from a connected extension.
@@ -357,7 +499,8 @@ pub async fn handle_ext_messages(
 
                             if let Some((client_id, tx, _bid)) = pending {
                                 let mut resp = value.clone();
-                                resp["id"] = serde_json::to_value(&client_id).unwrap();
+                                resp["id"] = serde_json::to_value(&client_id)
+                                    .expect("message id serialization should not fail");
                                 if let Some(result) = resp.get_mut("result") {
                                     if let Some(obj) = result.as_object_mut() {
                                         obj.insert("browserId".into(), json!(browser_id));

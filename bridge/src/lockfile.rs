@@ -24,6 +24,10 @@ use std::path::PathBuf;
 pub struct LockData {
     pub pid: u32,
     pub port: u16,
+    /// Auth token for loopback WS connections (for MCP adapter discovery).
+    /// Only present in the lockfile, which is user-private (0600 on Unix).
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 // ─── Platform-specific lockfile path ───
@@ -212,6 +216,7 @@ mod tests {
         let data = LockData {
             pid: std::process::id(),
             port: 9817,
+            token: Some("test-token".into()),
         };
         test_write(&data, &path);
 
@@ -229,6 +234,7 @@ mod tests {
         let dead_data = LockData {
             pid: 99999,
             port: 0,
+            token: None,
         };
         test_write(&dead_data, &path);
 

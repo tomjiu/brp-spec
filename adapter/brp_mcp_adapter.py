@@ -1,12 +1,26 @@
 """
 BRP MCP Adapter — Exposes BRP Bridge as a standard MCP server for QoderWork.
 
-Architecture:
-  QoderWork ←→ MCP (stdio) ←→ This Adapter ←→ stdin/stdout (Native Messaging) ←→ BRP Bridge ←→ WS ←→ Firefox Extension
+Architecture (v0.9 — Unified Bridge Discovery):
 
-The adapter spawns brp-bridge as a child process and communicates via
-Native Messaging format (4-byte LE length prefix + JSON-RPC).
-The Bridge runs its WS server; the Firefox Extension connects to it.
+  AI Client ←→ MCP (stdio) ←→ This Adapter
+                                   ↓
+                              Discovery
+                                   ↓
+                         ┌──── Found? ────┐
+                         YES               NO
+                         ↓                 ↓
+                   WS connect to      Spawn Bridge
+                   existing Bridge    (NM stdin/stdout)
+                         ↓                 ↓
+                         └──── Bridge ─────┘
+                                   ↓
+                             Firefox Extension
+
+Discovery reads the Bridge lockfile to find {pid, port, token}.
+If the PID is alive and the port is reachable, the adapter connects
+via WebSocket as a `register_client` and sends JSON-RPC directly.
+Otherwise, it spawns a new Bridge in NM mode (fallback).
 
 Usage:
   python -X utf8 brp_mcp_adapter.py [--bridge-path /path/to/brp-bridge]
@@ -36,22 +50,207 @@ logging.basicConfig(
 )
 log = logging.getLogger("brp-mcp")
 
-# ── Bridge Process State ──
+# ── Bridge State ──
 _bridge_proc: Optional[asyncio.subprocess.Process] = None
+_ws_conn = None  # websockets connection when in WS mode
 _request_id = 0
 _pending: dict[int, asyncio.Future] = {}
 _initialized = False
 _reader_task: Optional[asyncio.Task] = None
-_bridge_auth_token: Optional[str] = None  # Captured from Bridge's authToken notification
+_bridge_auth_token: Optional[str] = None
 
 
-async def ensure_bridge(bridge_path: str, ws_addr: str):
-    """Spawn BRP Bridge as a child process if not already running.
-    Returns the actual WS port (may differ from ws_addr when port=0 is used)."""
-    global _bridge_proc, _reader_task
+# ── Bridge Discovery ──
 
-    if _bridge_proc and _bridge_proc.returncode is None:
+def _lockfile_path() -> str:
+    """Platform-specific path to the Bridge lockfile."""
+    if sys.platform == "win32":
+        localappdata = os.environ.get("LOCALAPPDATA", ".")
+        return os.path.join(localappdata, "brp-bridge", "bridge.lock")
+    if xdg := os.environ.get("XDG_RUNTIME_DIR"):
+        return os.path.join(xdg, "brp-bridge.lock")
+    import pwd
+    uid = os.getuid()
+    return f"/tmp/brp-bridge-{uid}.lock"
+
+
+def _is_pid_alive(pid: int) -> bool:
+    """Check if a process with the given PID is alive."""
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.windll.kernel32
+        SYNCHRONIZE = 0x00100000
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        handle = kernel32.OpenProcess(
+            SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid
+        )
+        if not handle:
+            return False
+        exit_code = wintypes.DWORD()
+        ret = kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+        kernel32.CloseHandle(handle)
+        return ret != 0 and exit_code.value == STILL_ACTIVE
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except (OSError, ProcessLookupError):
+            return False
+
+
+async def _try_discover_bridge() -> Optional[tuple[str, str]]:
+    """Try to discover an already-running Bridge via lockfile.
+    Returns (ws_url, token) if found, None otherwise."""
+    path = _lockfile_path()
+    if not os.path.exists(path):
+        return None
+
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+    except Exception:
+        return None
+
+    pid = data.get("pid")
+    port = data.get("port")
+    token = data.get("token")
+    if not pid or not port:
+        return None
+
+    if not _is_pid_alive(pid):
+        log.info("[Discovery] Stale lockfile (PID %d is dead), ignoring", pid)
+        return None
+
+    # Verify port is reachable
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection("127.0.0.1", port), timeout=2.0
+        )
+        writer.close()
+    except Exception:
+        log.info("[Discovery] Bridge PID %d on port %d not reachable", pid, port)
+        return None
+
+    if not token:
+        log.info("[Discovery] Lockfile has no token, cannot authenticate")
+        return None
+
+    ws_url = f"ws://127.0.0.1:{port}"
+    log.info("[Discovery] Found live Bridge (PID=%d, port=%d)", pid, port)
+    return (ws_url, token)
+
+
+async def _connect_ws(ws_url: str, token: str) -> bool:
+    """Connect to a Bridge via WebSocket as a register_client."""
+    global _ws_conn, _bridge_auth_token
+    try:
+        import websockets
+    except ImportError:
+        log.error("websockets library not installed")
+        return False
+
+    try:
+        _ws_conn = await asyncio.wait_for(
+            websockets.connect(ws_url, max_size=16 * 1024 * 1024),
+            timeout=5.0,
+        )
+    except Exception as e:
+        log.warning("[Discovery] WS connect failed: %s", e)
+        return False
+
+    # Send register_client
+    reg_msg = json.dumps({
+        "jsonrpc": "2.0",
+        "method": "register_client",
+        "params": {"token": token},
+    })
+    await _ws_conn.send(reg_msg)
+
+    # Start WS reader
+    global _reader_task
+    _reader_task = asyncio.create_task(_read_ws_messages())
+    _bridge_auth_token = token
+    log.info("[Discovery] Connected to Bridge via WS: %s", ws_url)
+    return True
+
+
+async def _read_ws_messages():
+    """Read messages from WS connection and dispatch to pending requests."""
+    global _ws_conn
+    try:
+        async for raw in _ws_conn:
+            msg = json.loads(raw)
+            msg_id = msg.get("id")
+            if msg_id is not None and msg_id in _pending:
+                future = _pending.pop(msg_id)
+                if not future.done():
+                    future.set_result(msg)
+                continue
+            # Handle notifications
+            method = msg.get("method", "")
+            if method:
+                log.debug("[WS] Notification: %s", method)
+    except Exception as e:
+        log.warning("[WS] Reader error: %s", e)
+    finally:
+        _ws_conn = None
+
+
+async def _ws_send(msg: dict):
+    """Send a JSON-RPC message via WebSocket."""
+    if not _ws_conn:
+        raise Exception("WS connection not established")
+    await _ws_conn.send(json.dumps(msg))
+
+
+# ── NM (Native Messaging) fallback ──
+
+async def _read_bridge_stdout():
+    """Read Native Messaging responses from Bridge's stdout."""
+    global _bridge_proc
+    try:
+        while _bridge_proc and _bridge_proc.returncode is None:
+            header = await _bridge_proc.stdout.readexactly(4)
+            length = struct.unpack("<I", header)[0]
+            payload = await _bridge_proc.stdout.readexactly(length)
+            msg = json.loads(payload.decode("utf-8"))
+            _dispatch_bridge_msg(msg)
+    except asyncio.IncompleteReadError:
+        log.warning("Bridge stdout closed")
+    except Exception as e:
+        log.error("Bridge reader error: %s", e)
+
+
+def _dispatch_bridge_msg(msg: dict):
+    """Handle a single bridge message."""
+    msg_id = msg.get("id")
+    if msg_id is not None and msg_id in _pending:
+        future = _pending.pop(msg_id)
+        if not future.done():
+            future.set_result(msg)
         return
+
+    method = msg.get("method", "")
+    if method == "notification/bridge.authToken":
+        global _bridge_auth_token
+        params = msg.get("params", {})
+        _bridge_auth_token = params.get("token")
+        log.info("Bridge auth token received (file: %s)", params.get("tokenFile", ""))
+
+
+async def _nm_send(msg: dict):
+    """Write a Native Messaging message to Bridge's stdin."""
+    payload = json.dumps(msg).encode("utf-8")
+    header = struct.pack("<I", len(payload))
+    _bridge_proc.stdin.write(header + payload)
+    await _bridge_proc.stdin.drain()
+
+
+async def _spawn_bridge(bridge_path: str, ws_addr: str):
+    """Spawn BRP Bridge as a child process (NM fallback)."""
+    global _bridge_proc, _reader_task
 
     log.info("Spawning BRP Bridge: %s", bridge_path)
     env = os.environ.copy()
@@ -66,7 +265,7 @@ async def ensure_bridge(bridge_path: str, ws_addr: str):
     )
     log.info("Bridge started (PID=%d, WS=%s)", _bridge_proc.pid, ws_addr)
 
-    # Read first NM message — bridge may write {port, token} if random port
+    # Read first NM message
     try:
         header = await asyncio.wait_for(_bridge_proc.stdout.readexactly(4), timeout=5.0)
         length = struct.unpack("<I", header)[0]
@@ -75,77 +274,49 @@ async def ensure_bridge(bridge_path: str, ws_addr: str):
         bridge_port = first_msg.get("port")
         bridge_token = first_msg.get("token")
         if bridge_port is not None:
-            log.info("Bridge actual WS port: %s (was configured as %s)", bridge_port, ws_addr)
+            log.info("Bridge WS port: %s", bridge_port)
             global _bridge_auth_token
             _bridge_auth_token = bridge_token
-            log.info("Bridge auth token received from port message")
         else:
-            # Not a port message (e.g. authToken notification for fixed port)
-            # Re-inject into reader for the background task to handle
-            log.debug("First message is not port info, delegating to reader")
-            # Can't easily re-inject; just handle it like the reader would
             _dispatch_bridge_msg(first_msg)
     except asyncio.TimeoutError:
-        log.warning("Bridge did not send port info within 5s (old version?)")
+        log.warning("Bridge did not send port info within 5s")
     except asyncio.IncompleteReadError:
         log.warning("Bridge stdout closed before sending port info")
 
-    # Start background reader for remaining Bridge stdout
     _reader_task = asyncio.create_task(_read_bridge_stdout())
 
 
-def _dispatch_bridge_msg(msg: dict):
-    """Handle a single bridge message (used for first message before reader task starts)."""
-    msg_id = msg.get("id")
-    if msg_id is not None and msg_id in _pending:
-        future = _pending.pop(msg_id)
-        if not future.done():
-            future.set_result(msg)
+async def ensure_bridge(bridge_path: str, ws_addr: str):
+    """Ensure we have a connection to a Bridge.
+    Tries Discovery first (reuse existing B1 Bridge), falls back to spawning."""
+    global _ws_conn, _bridge_proc
+
+    # Already connected?
+    if _ws_conn:
+        return
+    if _bridge_proc and _bridge_proc.returncode is None:
         return
 
-    method = msg.get("method", "")
-    if method == "notification/bridge.authToken":
-        global _bridge_auth_token
-        params = msg.get("params", {})
-        _bridge_auth_token = params.get("token")
-        token_file = params.get("tokenFile", "")
-        log.info("Bridge auth token received (file: %s)", token_file)
-        log.info("Configure this token in the Extension Options page for authentication")
+    # ── Step 1: Discovery — try to find an existing Bridge ──
+    discovered = await _try_discover_bridge()
+    if discovered:
+        ws_url, token = discovered
+        if await _connect_ws(ws_url, token):
+            return  # Connected via WS to existing Bridge
+
+    # ── Step 2: Fallback — spawn a new Bridge ──
+    log.info("[Discovery] No existing Bridge found, spawning new one")
+    await _spawn_bridge(bridge_path, ws_addr)
 
 
-async def _read_bridge_stdout():
-    """Read Native Messaging responses from Bridge's stdout."""
-    global _bridge_proc
-    try:
-        while _bridge_proc and _bridge_proc.returncode is None:
-            # Read 4-byte length prefix
-            header = await _bridge_proc.stdout.readexactly(4)
-            length = struct.unpack("<I", header)[0]
-
-            # Read JSON payload
-            payload = await _bridge_proc.stdout.readexactly(length)
-            msg = json.loads(payload.decode("utf-8"))
-            _dispatch_bridge_msg(msg)
-
-    except asyncio.IncompleteReadError:
-        log.warning("Bridge stdout closed")
-    except Exception as e:
-        log.error("Bridge reader error: %s", e)
-
-
-async def _send_to_bridge(msg: dict):
-    """Write a Native Messaging message to Bridge's stdin."""
-    payload = json.dumps(msg).encode("utf-8")
-    header = struct.pack("<I", len(payload))
-    _bridge_proc.stdin.write(header + payload)
-    await _bridge_proc.stdin.drain()
-
+# ── Unified request function ──
 
 async def brp_request(method: str, params: dict = None, browser_id: str = None) -> dict:
-    """Send a JSON-RPC request to BRP Bridge and wait for response."""
+    """Send a JSON-RPC request to BRP Bridge (via WS or NM) and wait for response."""
     global _request_id
 
-    if not _bridge_proc or _bridge_proc.returncode is not None:
+    if not _ws_conn and (not _bridge_proc or _bridge_proc.returncode is not None):
         raise Exception("BRP Bridge is not running")
 
     _request_id += 1
@@ -166,7 +337,12 @@ async def brp_request(method: str, params: dict = None, browser_id: str = None) 
     future = loop.create_future()
     _pending[req_id] = future
 
-    await _send_to_bridge(msg)
+    # Send via the active transport
+    if _ws_conn:
+        await _ws_send(msg)
+    else:
+        await _nm_send(msg)
+
     log.info("BRP → %s (id=%d)", method, req_id)
 
     try:

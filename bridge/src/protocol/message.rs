@@ -106,6 +106,7 @@ impl Response {
                 message: msg.to_string(),
                 data: Some(serde_json::json!({
                     "errorCode": error_codes::BRP_INTERNAL_ERROR,
+                    "category": "INTERNAL",
                     "retriable": false
                 })),
             },
@@ -151,4 +152,19 @@ pub mod error_codes {
     pub const BRP_METHOD_NOT_FOUND: &str = "BRP_METHOD_NOT_FOUND";
     pub const BRP_CAPABILITY_NOT_SUPPORTED: &str = "BRP_CAPABILITY_NOT_SUPPORTED";
     pub const BRP_INTERNAL_ERROR: &str = "BRP_INTERNAL_ERROR";
+}
+
+/// Map an error code to its error category for AI Agent classification.
+pub fn error_category(code: &str) -> &str {
+    match code {
+        "BRP_MASTER_TOKEN_REQUIRED" | "BRP_TOKEN_REVOKE_FAILED" => "AUTH",
+        "BRP_METHOD_NOT_FOUND" | "BRP_CAPABILITY_NOT_SUPPORTED" => "CAPABILITY",
+        "BRP_PERMISSION_DENIED" | "BRP_URL_SCHEME_BLOCKED" => "PERMISSION",
+        "BRP_EXTENSION_DISCONNECTED" => "TARGET",
+        "BRP_SESSION_UNINITIALIZED"
+        | "BRP_INTERNAL_ERROR"
+        | "BRP_MESSAGE_TOO_LARGE"
+        | "BRP_TIMEOUT" => "INTERNAL",
+        _ => "INTERNAL",
+    }
 }
