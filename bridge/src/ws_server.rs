@@ -420,7 +420,7 @@ pub async fn handle_ext_messages(
                     if let Some(method) = value.get("method").and_then(|v| v.as_str()) {
                         let seq = {
                             let mut s = state.write().await;
-                            s.session.next_sequence()
+                            s.session_mut(&browser_id).next_sequence()
                         };
 
                         let mut params = value.get("params").cloned().unwrap_or(json!({}));

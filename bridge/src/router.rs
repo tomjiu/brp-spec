@@ -20,7 +20,8 @@ use crate::ws_server::ExtSender;
 /// Central state owned exclusively by the router.
 /// Other modules (ws_server) access it through Arc<RwLock<>>.
 pub struct BridgeState {
-    pub session: Session,
+    /// Per-extension sessions: browser_id → Session
+    pub sessions: HashMap<String, Session>,
     /// Multiple extension connections: browser_id → sender
     pub extensions: HashMap<String, ExtSender>,
     /// Pending requests: ext_request_id → (client_request_id, oneshot_sender, browser_id)
@@ -34,7 +35,7 @@ pub struct BridgeState {
 impl BridgeState {
     pub fn new() -> Self {
         Self {
-            session: Session::new(),
+            sessions: HashMap::new(),
             extensions: HashMap::new(),
             pending: HashMap::new(),
             next_ext_id: 10000,
@@ -48,35 +49,52 @@ impl BridgeState {
         id
     }
 
+    /// Get or init session for a given browser_id.
+    pub fn session_mut(&mut self, browser_id: &str) -> &mut Session {
+        self.sessions
+            .entry(browser_id.to_string())
+            .or_insert_with(Session::new)
+    }
+
+    /// Get the first available session (backward-compat helper).
+    #[allow(dead_code)]
+    pub fn any_session(&self) -> Option<&Session> {
+        self.sessions.values().next()
+    }
+
     pub fn add_extension(&mut self, browser_id: String, sender: ExtSender) {
         log::info!("[Bridge] Extension registered: {}", browser_id);
-        self.extensions.insert(browser_id, sender);
+        self.extensions.insert(browser_id.clone(), sender);
+        // Ensure a session exists for this browser_id
+        self.sessions.entry(browser_id).or_insert_with(Session::new);
     }
 
     pub fn remove_extension(&mut self, browser_id: &str) {
         log::warn!("[Bridge] Extension disconnected: {}", browser_id);
         self.extensions.remove(browser_id);
-        // Retain session for 30s — reconnecting extension can resume
-        self.session.state = SessionState::Disconnected;
-        let current_seq = self.session.sequence.current();
-        let kept = Session {
-            id: self.session.id.clone(),
-            state: SessionState::Disconnected,
-            protocol_version: self.session.protocol_version.clone(),
-            negotiated_version: self.session.negotiated_version.clone(),
-            client_info: self.session.client_info.clone(),
-            capabilities: self.session.capabilities.clone(),
-            sequence: SequenceCounter::with_value(current_seq),
-        };
-        self.session_store.store(browser_id.to_string(), kept);
+        // Retain this instance's session for 30s
+        if let Some(mut kept) = self.sessions.remove(browser_id) {
+            kept.state = SessionState::Disconnected;
+            let current_seq = kept.sequence.current();
+            let stored = Session {
+                id: kept.id.clone(),
+                state: SessionState::Disconnected,
+                protocol_version: kept.protocol_version.clone(),
+                negotiated_version: kept.negotiated_version.clone(),
+                client_info: kept.client_info.clone(),
+                capabilities: kept.capabilities.clone(),
+                sequence: SequenceCounter::with_value(current_seq),
+            };
+            self.session_store.store(browser_id.to_string(), stored);
+        }
     }
 
     pub fn restore_session(&mut self, browser_id: &str) -> Option<&Session> {
         if let Some(mut kept) = self.session_store.take(browser_id) {
             kept.state = SessionState::Ready;
             log::info!("[Bridge] Session recovered for {}", browser_id);
-            self.session = kept;
-            Some(&self.session)
+            self.sessions.insert(browser_id.to_string(), kept);
+            self.sessions.get(browser_id)
         } else {
             None
         }
@@ -188,19 +206,37 @@ pub async fn handle_request(
                 });
 
             let mut s = state.write().await;
-            let result = s.session.initialize(&params);
+            let sid = s
+                .extensions
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| "default".into());
+            let result = s.session_mut(&sid).initialize(&params);
             Response::success(id, serde_json::to_value(result).unwrap())
         }
 
         "shutdown" => {
             let mut s = state.write().await;
-            s.session.shutdown();
+            let sid = s
+                .extensions
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| "default".into());
+            s.session_mut(&sid).shutdown();
             Response::success(id, json!({}))
         }
 
         "exit" => {
             let mut s = state.write().await;
-            s.session.exit();
+            let sid = s
+                .extensions
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| "default".into());
+            s.session_mut(&sid).exit();
             Response::success(id, json!({}))
         }
 
@@ -279,7 +315,18 @@ pub async fn handle_request(
             // Session state check
             {
                 let s = state.read().await;
-                if !s.session.is_ready() {
+                let target = req
+                    .params
+                    .as_ref()
+                    .and_then(|p| p.get("browserId"))
+                    .and_then(|b| b.as_str())
+                    .unwrap_or("default");
+                let session_ready = s
+                    .sessions
+                    .get(target)
+                    .map(|ses| ses.is_ready())
+                    .unwrap_or(false);
+                if !session_ready {
                     return Response::error(
                         id,
                         ErrorResponse {
