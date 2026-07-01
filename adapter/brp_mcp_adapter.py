@@ -250,7 +250,7 @@ async def _nm_send(msg: dict):
 
 async def _spawn_bridge(bridge_path: str, ws_addr: str):
     """Spawn BRP Bridge as a child process (NM fallback)."""
-    global _bridge_proc, _reader_task
+    global _bridge_proc, _reader_task, _initialized
 
     log.info("Spawning BRP Bridge: %s", bridge_path)
     env = os.environ.copy()
@@ -264,6 +264,7 @@ async def _spawn_bridge(bridge_path: str, ws_addr: str):
         env=env,
     )
     log.info("Bridge started (PID=%d, WS=%s)", _bridge_proc.pid, ws_addr)
+    _initialized = False  # Reset session state for new Bridge
 
     # Read first NM message
     try:
@@ -290,7 +291,7 @@ async def _spawn_bridge(bridge_path: str, ws_addr: str):
 async def ensure_bridge(bridge_path: str, ws_addr: str):
     """Ensure we have a connection to a Bridge.
     Tries Discovery first (reuse existing B1 Bridge), falls back to spawning."""
-    global _ws_conn, _bridge_proc
+    global _ws_conn, _bridge_proc, _initialized
 
     # Already connected?
     if _ws_conn:
@@ -303,6 +304,7 @@ async def ensure_bridge(bridge_path: str, ws_addr: str):
     if discovered:
         ws_url, token = discovered
         if await _connect_ws(ws_url, token):
+            _initialized = False  # Reset session for newly discovered Bridge
             return  # Connected via WS to existing Bridge
 
     # ── Step 2: Fallback — spawn a new Bridge ──

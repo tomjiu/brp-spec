@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "BRP Bridge Extension",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "description": "Browser Runtime Protocol - Firefox Extension for AI agent interaction",
   "permissions": [
     "activeTab",
@@ -56,6 +56,7 @@
     "gecko": {
       "id": "brp-bridge@brp-spec.org",
       "strict_min_version": "140.0",
+      "update_url": "https://raw.githubusercontent.com/tomjiu/brp-spec/main/extension/update.json",
       "data_collection_permissions": {
         "required": ["none"]
       }

@@ -5,7 +5,7 @@ All notable changes to the BRP (Browser Runtime Protocol) project are documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.0] — 2026-07-01
+## [1.0.0] — 2026-07-02
 
 ### Added
 
@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **unwrap elimination**: Replaced production `unwrap()` with `expect()` in router/ws_server/main (PR #75).
 - **v0.9.0 release**: PR #74 CHANGELOG + API + ROADMAP sync (now corrected to reflect actual merged content).
 - **AMO**: `data_collection_permissions` must be object (`{"required": ["none"]}`), `strict_min_version` 140.0 (PR #76).
+- **AMO auto-update**: `update_url` pointing to GitHub raw `update.json` for automatic updates via GitHub Releases.
+- **B1 discovery fallback** (PR #77): Bootstrap mode reads existing lockfile when IPC lock is held by MCP Bridge, forwarding token to Extension.
+- **Session re-initialization** (PR #77): Adapter resets `_initialized` flag on Bridge reconnect, preventing "Session not initialized" errors.
 
 ### Deferred (v1.0)
 

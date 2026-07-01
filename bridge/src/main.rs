@@ -131,13 +131,49 @@ async fn run_bootstrap() {
                 Some(lock)
             }
             Err(e) => {
-                log::error!("[Bootstrap] Failed to acquire pipe lock: {}", e);
-                return;
+                log::warn!(
+                    "[Bootstrap] Pipe lock not acquired: {} — trying existing Bridge discovery",
+                    e
+                );
+                None
             }
         }
     };
 
-    // ── 2. Start WebSocket server on port 0 (OS-assigned port) ──
+    // ── 2. If IPC lock was NOT acquired, fallback to discovery from existing Bridge ──
+    let lock_acquired = _ipc_lock.is_some();
+    if !lock_acquired {
+        // Try to read the existing lockfile to discover the running Bridge
+        if let Some(lock_data) = lockfile::read() {
+            if lockfile::is_pid_alive(lock_data.pid) {
+                log::info!(
+                    "[Bootstrap] Found existing Bridge at pid={} port={}, forwarding token to extension",
+                    lock_data.pid,
+                    lock_data.port
+                );
+                let token = lock_data.token.clone().unwrap_or_default();
+                let token_msg = json!({
+                    "port": lock_data.port,
+                    "token": token
+                });
+                sanitized_log!(
+                    info,
+                    "[Bootstrap] Sending token message (from existing Bridge): {}",
+                    token_msg
+                );
+                if let Err(e) = crate::transport::send_native_message(&token_msg).await {
+                    log::error!("[Bootstrap] Failed to send token: {}", e);
+                } else {
+                    log::info!("[Bootstrap] Token forwarded from existing Bridge. Exiting.");
+                }
+                return;
+            }
+        }
+        log::error!("[Bootstrap] No existing Bridge found. Exiting without token delivery.");
+        return;
+    }
+
+    // ── 3. Start WebSocket server on port 0 (OS-assigned port) ──
     let allow_script_execute = config.allow_script_execute;
     let state = Arc::new(RwLock::new(BridgeState::new()));
     let token_manager = Arc::new(TokenManager::new(
@@ -191,7 +227,7 @@ async fn run_bootstrap() {
         addr
     };
 
-    // ── 3. Acquire PID lockfile ──
+    // ── 4. Acquire PID lockfile ──
     let lock_data = lockfile::LockData {
         pid: std::process::id(),
         port: ws_addr.port(),
@@ -202,7 +238,7 @@ async fn run_bootstrap() {
         return;
     }
 
-    // ── 4. Send token with real port ──
+    // ── 5. Send token with real port ──
     let token_msg = json!({
         "port": ws_addr.port(),
         "token": config.auth_token
@@ -218,7 +254,7 @@ async fn run_bootstrap() {
 
     log::info!("[Bootstrap] Token delivered, waiting for extension WS connection...");
 
-    // ── 5. Wait for WS connection (30s timeout) or Ctrl+C ──
+    // ── 6. Wait for WS connection (30s timeout) or Ctrl+C ──
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             log::info!("[Bootstrap] Ctrl+C received (before WS connect)");
@@ -235,7 +271,7 @@ async fn run_bootstrap() {
         }
     }
 
-    // ── 6. WS connected — wait for stdin EOF or Ctrl+C ──
+    // ── 7. WS connected — wait for stdin EOF or Ctrl+C ──
     log::info!("[Bootstrap] WS connected, hanging as keepalive...");
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
