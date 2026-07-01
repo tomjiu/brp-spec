@@ -169,7 +169,7 @@ async fn handle_ws_connection(
                             "browserId": browser_id,
                             "sessionId": recovered_session.id,
                             "capabilities": recovered_session.capabilities,
-                            "lastSequence": 0u64,
+                            "lastSequence": recovered_session.sequence.current(),
                         }
                     });
                     let _ = ext_sender

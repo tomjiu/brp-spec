@@ -58,6 +58,7 @@ impl BridgeState {
         self.extensions.remove(browser_id);
         // Retain session for 30s — reconnecting extension can resume
         self.session.state = SessionState::Disconnected;
+        let current_seq = self.session.sequence.current();
         let kept = Session {
             id: self.session.id.clone(),
             state: SessionState::Disconnected,
@@ -65,13 +66,14 @@ impl BridgeState {
             negotiated_version: self.session.negotiated_version.clone(),
             client_info: self.session.client_info.clone(),
             capabilities: self.session.capabilities.clone(),
-            sequence: SequenceCounter::new(), // sequence is per-connection, start fresh on resume
+            sequence: SequenceCounter::with_value(current_seq),
         };
         self.session_store.store(browser_id.to_string(), kept);
     }
 
     pub fn restore_session(&mut self, browser_id: &str) -> Option<&Session> {
-        if let Some(kept) = self.session_store.take(browser_id) {
+        if let Some(mut kept) = self.session_store.take(browser_id) {
+            kept.state = SessionState::Ready;
             log::info!("[Bridge] Session recovered for {}", browser_id);
             self.session = kept;
             Some(&self.session)
