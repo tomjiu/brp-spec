@@ -140,7 +140,7 @@ async fn handle_ws_connection(
             let (mut tx, mut receiver) = ws_stream.split();
 
             // Wait for registration message (10s timeout)
-            let browser_id = match register_extension(
+            let (browser_id, instance_id) = match register_extension(
                 &mut receiver,
                 &mut tx,
                 &token_manager,
@@ -149,7 +149,7 @@ async fn handle_ws_connection(
             )
             .await
             {
-                Some(id) => id,
+                Some(pair) => pair,
                 None => return,
             };
 
@@ -158,21 +158,21 @@ async fn handle_ws_connection(
             // Store the connection
             {
                 let mut s = state.write().await;
-                s.add_extension(browser_id.clone(), ext_sender);
+                s.add_extension(browser_id.clone(), instance_id.clone(), ext_sender);
             }
 
             // Handle incoming messages from extension
-            handle_ext_messages(&browser_id, receiver, state.clone(), notify_tx).await;
+            handle_ext_messages(&instance_id, receiver, state.clone(), notify_tx).await;
 
-            // Extension disconnected — fail all pending requests for this browser
+            // Extension disconnected — fail all pending requests for this instance
             {
                 let mut s = state.write().await;
-                s.remove_extension(&browser_id);
+                s.remove_extension(&instance_id);
 
                 let failed_ids: Vec<i64> = s
                     .pending
                     .iter()
-                    .filter(|(_, (_, _, bid))| bid == &browser_id)
+                    .filter(|(_, (_, _, iid))| iid == &instance_id)
                     .map(|(id, _)| *id)
                     .collect();
 
@@ -202,7 +202,7 @@ async fn handle_ws_connection(
 }
 
 /// Wait for and validate the extension registration message.
-/// Returns the browser_id on success, or None (connection closed) on failure.
+/// Returns (browser_id, instance_id) on success, or None on failure.
 async fn register_extension(
     receiver: &mut futures_util::stream::SplitStream<
         tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
@@ -214,7 +214,7 @@ async fn register_extension(
     token_manager: &Arc<TokenManager>,
     rate_limiter: &Arc<Mutex<RateLimiter>>,
     peer: std::net::SocketAddr,
-) -> Option<String> {
+) -> Option<(String, String)> {
     use tokio_tungstenite::tungstenite::Message as WsMessage;
 
     let text = match tokio::time::timeout(std::time::Duration::from_secs(10), receiver.next()).await
@@ -302,17 +302,29 @@ async fn register_extension(
         return None;
     }
 
-    let bid = v
+    let browser_id = v
         .get("params")
         .and_then(|p| p.get("browserId"))
         .and_then(|b| b.as_str())
         .unwrap_or("unknown")
         .to_string();
 
-    log::info!("[WsServer] Extension authenticated: {} from {}", bid, peer);
+    let instance_id = v
+        .get("params")
+        .and_then(|p| p.get("instanceId"))
+        .and_then(|i| i.as_str())
+        .unwrap_or(&browser_id)
+        .to_string();
+
+    log::info!(
+        "[WsServer] Extension authenticated: {} (instance: {}) from {}",
+        browser_id,
+        instance_id,
+        peer
+    );
 
     rate_limiter.lock().await.on_authenticated();
-    Some(bid)
+    Some((browser_id, instance_id))
 }
 
 /// Process incoming messages from a connected extension.
