@@ -313,6 +313,7 @@ async fn run_bridge() {
     let allow_script_execute = config.allow_script_execute;
     let use_random_port = config.ws_addr.ends_with(":0");
 
+    // ── Acquire lockfile + start WS server ──
     if use_random_port {
         let listener = match tokio::net::TcpListener::bind(&config.ws_addr).await {
             Ok(l) => l,
@@ -325,8 +326,20 @@ async fn run_bridge() {
             .local_addr()
             .expect("bound socket should have addr");
         let actual_port = addr.port();
+
+        // Acquire lockfile BEFORE spawning WS server
+        let lock_data = lockfile::LockData {
+            pid: std::process::id(),
+            port: actual_port,
+            token: Some(config.auth_token.clone()),
+        };
+        if let Err(e) = lockfile::acquire(lock_data) {
+            log::error!("[Bridge] Another Bridge is already running: {}", e);
+            return;
+        }
+
         log::info!(
-            "[Bridge] WS server on 127.0.0.1:{} (random port)",
+            "[Bridge] WS server on 127.0.0.1:{} (random port, lockfile acquired)",
             actual_port
         );
 
@@ -356,6 +369,28 @@ async fn run_bridge() {
             .await;
         });
     } else {
+        let fixed_port: u16 = config
+            .ws_addr
+            .rsplit(':')
+            .next()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(9817);
+
+        // Acquire lockfile BEFORE spawning WS server
+        let lock_data = lockfile::LockData {
+            pid: std::process::id(),
+            port: fixed_port,
+            token: Some(config.auth_token.clone()),
+        };
+        if let Err(e) = lockfile::acquire(lock_data) {
+            log::error!("[Bridge] Another Bridge is already running: {}", e);
+            return;
+        }
+        log::info!(
+            "[Bridge] WS server on {} (fixed port, lockfile acquired)",
+            config.ws_addr
+        );
+
         let state = state.clone();
         let notify_tx = notify_tx.clone();
         let ws_addr = config.ws_addr.clone();
@@ -380,6 +415,7 @@ async fn run_bridge() {
             Err(e) => log::error!("[Bridge] Signal error: {}", e),
         }
         log::info!("BRP Bridge exiting (standalone)");
+        lockfile::release();
         return;
     }
 
@@ -425,4 +461,6 @@ async fn run_bridge() {
             break;
         }
     }
+    lockfile::release();
+    log::info!("[Bridge] Exiting");
 }
