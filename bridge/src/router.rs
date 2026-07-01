@@ -203,6 +203,40 @@ pub async fn handle_request(
                 );
             }
 
+            // Capability check: method must be in negotiated set or match a wildcard
+            {
+                let s = state.read().await;
+                if s.session.state == SessionState::Ready || s.session.state == SessionState::Busy {
+                    let allowed = s.session.negotiated_capabilities.contains(&method)
+                        || s.session.capabilities.actions.iter().any(|a| {
+                            if a.ends_with(".*") {
+                                method.starts_with(&a[..a.len() - 1])
+                            } else {
+                                false
+                            }
+                        });
+                    if !allowed {
+                        return Response::error(
+                            id,
+                            ErrorResponse {
+                                code: -32005,
+                                message: format!(
+                                    "Method not supported by negotiated capabilities: {}",
+                                    method
+                                ),
+                                data: Some(json!({
+                                    "errorCode":
+                                        error_codes::BRP_CAPABILITY_NOT_SUPPORTED,
+                                    "retriable": false,
+                                    "recoveryHint":
+                                        "Check initialize response for supported actions"
+                                })),
+                            },
+                        );
+                    }
+                }
+            }
+
             // URL scheme validation
             if method == "page.navigate" || method == "tab.open" {
                 if let Some(ref params) = req.params {
@@ -381,6 +415,78 @@ pub async fn forward_to_extension(req: Request, state: Arc<RwLock<BridgeState>>)
                     })),
                 },
             )
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::SessionState;
+    use std::collections::HashSet;
+    use tokio::sync::RwLock;
+
+    fn test_token_manager() -> Arc<TokenManager> {
+        let tmp = tempfile::tempdir().unwrap();
+        Arc::new(TokenManager::new(
+            "mt_test".into(),
+            tmp.path().join("tokens.json"),
+            String::new(),
+        ))
+    }
+
+    fn make_request(id: i64, method: &str, params: Option<Value>) -> Request {
+        Request {
+            jsonrpc: JsonRpcVersion,
+            id: MessageId::Number(id),
+            method: method.to_string(),
+            params,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_capability_not_supported() {
+        let state = Arc::new(RwLock::new(BridgeState::new()));
+        {
+            let mut s = state.write().await;
+            let mut caps = HashSet::new();
+            caps.insert("page.navigate".to_string());
+            s.session.negotiated_capabilities = caps;
+            s.session.state = SessionState::Ready;
+        }
+
+        let req = make_request(1, "element.click", None);
+        let resp = handle_request(req, state, false, test_token_manager()).await;
+        assert!(resp.error.is_some());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32005);
+        assert_eq!(
+            err.data.unwrap()["errorCode"],
+            crate::protocol::message::error_codes::BRP_CAPABILITY_NOT_SUPPORTED
+        );
+    }
+
+    #[tokio::test]
+    async fn test_capability_supported_method_passes_cap_check() {
+        let state = Arc::new(RwLock::new(BridgeState::new()));
+        {
+            let mut s = state.write().await;
+            let mut caps = HashSet::new();
+            caps.insert("page.navigate".to_string());
+            s.session.negotiated_capabilities = caps;
+            s.session.state = SessionState::Ready;
+        }
+
+        let req = make_request(
+            1,
+            "page.navigate",
+            Some(json!({"url": "https://example.com"})),
+        );
+        let resp = handle_request(req, state, false, test_token_manager()).await;
+        // Should NOT be -32005 (may fail at forward_to_extension with -32001 "No extension")
+        if let Some(err) = resp.error {
+            assert_ne!(err.code, -32005);
         }
     }
 }

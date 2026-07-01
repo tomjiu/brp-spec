@@ -394,12 +394,33 @@ describe("handleInitialize", () => {
       "page.navigate", "page.getInteractionTree", "page.screenshot",
       "page.goBack", "page.goForward", "page.reload", "page.waitForSelector",
       "tab.list", "tab.open", "tab.close", "tab.select",
+      "tab.setControllable",
       "element.click", "element.type", "element.fill", "element.scroll",
       "element.hover", "element.select", "element.getAttribute",
       "keyboard.press", "script.execute",
+      "history.search", "history.delete",
     ];
     for (const action of expectedActions) {
       expect(result.capabilities.actions).toContain(action);
     }
+  });
+
+  it("should have capabilities.actions matching METHOD_ROUTES minus lifecycle methods", () => {
+    const result = BRP.handleInitialize({});
+    const routes = BRP.getKnownMethods().filter(
+      m => m !== "initialize" && m !== "shutdown"
+    );
+    expect(result.capabilities.actions.sort()).toEqual(routes.sort());
+  });
+
+  it("should exclude lifecycle methods from capabilities.actions", () => {
+    const result = BRP.handleInitialize({});
+    expect(result.capabilities.actions).not.toContain("initialize");
+    expect(result.capabilities.actions).not.toContain("shutdown");
+  });
+
+  it("should include tab.setControllable in capabilities actions", () => {
+    const result = BRP.handleInitialize({});
+    expect(result.capabilities.actions).toContain("tab.setControllable");
   });
 });
