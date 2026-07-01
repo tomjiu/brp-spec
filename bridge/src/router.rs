@@ -21,12 +21,19 @@ use crate::ws_server::ExtSender;
 /// Other modules (ws_server) access it through Arc<RwLock<>>.
 pub struct BridgeState {
     pub session: Session,
-    /// Multiple extension connections: browser_id → sender
-    pub extensions: HashMap<String, ExtSender>,
-    /// Pending requests: ext_request_id → (client_request_id, oneshot_sender, browser_id)
+    /// Connected extensions: instance_id → (browser_id, sender)
+    pub extensions: HashMap<String, InstanceInfo>,
+    /// Pending requests: ext_request_id → (client_request_id, oneshot_sender, instance_id)
     pub pending: HashMap<i64, (MessageId, oneshot::Sender<Response>, String)>,
     /// Internal request ID counter for extension communication
     next_ext_id: i64,
+}
+
+/// Information about a connected extension instance.
+#[derive(Clone)]
+pub struct InstanceInfo {
+    pub browser_id: String,
+    pub sender: ExtSender,
 }
 
 impl BridgeState {
@@ -45,25 +52,60 @@ impl BridgeState {
         id
     }
 
-    pub fn add_extension(&mut self, browser_id: String, sender: ExtSender) {
-        log::info!("[Bridge] Extension registered: {}", browser_id);
-        self.extensions.insert(browser_id, sender);
+    pub fn add_extension(&mut self, browser_id: String, instance_id: String, sender: ExtSender) {
+        log::info!(
+            "[Bridge] Extension registered: {} (instance: {})",
+            browser_id,
+            instance_id
+        );
+        self.extensions
+            .insert(instance_id, InstanceInfo { browser_id, sender });
     }
 
-    pub fn remove_extension(&mut self, browser_id: &str) {
-        log::warn!("[Bridge] Extension disconnected: {}", browser_id);
-        self.extensions.remove(browser_id);
+    pub fn remove_extension(&mut self, instance_id: &str) {
+        let bid = self
+            .extensions
+            .get(instance_id)
+            .map(|i| i.browser_id.clone())
+            .unwrap_or_else(|| "unknown".into());
+        log::warn!(
+            "[Bridge] Extension disconnected: {} (instance: {})",
+            bid,
+            instance_id
+        );
+        self.extensions.remove(instance_id);
     }
 
-    pub fn get_sender<'a>(&'a self, browser_id: Option<&'a str>) -> Option<(&'a str, ExtSender)> {
-        if let Some(id) = browser_id {
-            self.extensions.get(id).map(|s| (id, s.clone()))
-        } else {
-            self.extensions
-                .iter()
-                .next()
-                .map(|(id, s)| (id.as_str(), s.clone()))
+    /// Look up an extension by instance_id, browser_id, or first available.
+    /// Returns (instance_id, browser_id, sender).
+    pub fn get_sender(
+        &self,
+        instance_id: Option<&str>,
+        browser_id: Option<&str>,
+    ) -> Option<(String, String, ExtSender)> {
+        // 1. Exact instance_id match
+        if let Some(iid) = instance_id {
+            if let Some(info) = self.extensions.get(iid) {
+                return Some((
+                    iid.to_string(),
+                    info.browser_id.clone(),
+                    info.sender.clone(),
+                ));
+            }
         }
+        // 2. First match by browser_id
+        if let Some(bid) = browser_id {
+            for (iid, info) in &self.extensions {
+                if info.browser_id == bid {
+                    return Some((iid.clone(), info.browser_id.clone(), info.sender.clone()));
+                }
+            }
+        }
+        // 3. First available
+        self.extensions
+            .iter()
+            .next()
+            .map(|(iid, info)| (iid.clone(), info.browser_id.clone(), info.sender.clone()))
     }
 }
 
@@ -181,8 +223,8 @@ pub async fn handle_request(
             let s = state.read().await;
             let browsers: Vec<Value> = s
                 .extensions
-                .keys()
-                .map(|id| json!({ "browserId": id }))
+                .iter()
+                .map(|(iid, info)| json!({ "browserId": info.browser_id, "instanceId": iid }))
                 .collect();
             Response::success(id, json!({ "browsers": browsers, "count": browsers.len() }))
         }
@@ -273,18 +315,26 @@ pub async fn handle_request(
 }
 
 pub async fn forward_to_extension(req: Request, state: Arc<RwLock<BridgeState>>) -> Response {
+    let target_instance = req
+        .params
+        .as_ref()
+        .and_then(|p| p.get("instanceId"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let target_browser = req
         .params
         .as_ref()
         .and_then(|p| p.get("browserId"))
-        .and_then(|b| b.as_str())
+        .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let (ext_sender, ext_id, rx, browser_id) = {
+    let (ext_sender, ext_id, rx, instance_id) = {
         let mut s = state.write().await;
 
-        let (bid, sender) = match s.get_sender(target_browser.as_deref()) {
-            Some((id, s)) => (id.to_string(), s),
+        let (iid, sender) = match s
+            .get_sender(target_instance.as_deref(), target_browser.as_deref())
+        {
+            Some((iid, _bid, sender)) => (iid, sender),
             None => {
                 return Response::error(
                     req.id.clone(),
@@ -303,21 +353,22 @@ pub async fn forward_to_extension(req: Request, state: Arc<RwLock<BridgeState>>)
 
         let ext_id = s.next_ext_request_id();
         let (tx, rx) = oneshot::channel();
-        s.pending.insert(ext_id, (req.id.clone(), tx, bid.clone()));
+        s.pending.insert(ext_id, (req.id.clone(), tx, iid.clone()));
 
-        (sender, ext_id, rx, bid)
+        (sender, ext_id, rx, iid)
     };
 
     log::info!(
         "[Bridge] → {} to {} (ext_id={})",
         req.method,
-        browser_id,
+        instance_id,
         ext_id
     );
 
     let mut params = req.params.unwrap_or(json!({}));
     if let Some(obj) = params.as_object_mut() {
         obj.remove("browserId");
+        obj.remove("instanceId");
     }
 
     let ext_msg = json!({

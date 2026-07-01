@@ -27,6 +27,19 @@ const WS_URL = "ws://127.0.0.1:9817";
 const RECONNECT_BASE_DELAY = 1000;
 const RECONNECT_MAX_DELAY = 10000;
 
+async function generateInstanceId(browserName: string): Promise<string> {
+  // Combine browser name + profile path hash + random suffix for uniqueness
+  let suffix = "unknown-profile";
+  try {
+    const info = await browser.runtime.getBrowserInfo();
+    suffix = `${info.name || "unknown"}-${info.version || "0"}`;
+  } catch {
+    // fallback
+  }
+  const rand = Math.random().toString(36).slice(2, 6);
+  return `${browserName}-${rand}`;
+}
+
 let ws: WebSocket | null = null;
 let reconnectAttempts = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -192,11 +205,14 @@ function setupConnection(socket: WebSocket): void {
       browserName = navigator.userAgent.includes("Zen") ? "zen" : "firefox";
     }
 
+    const instanceId = await generateInstanceId(browserName);
+
     const registerMsg = JSON.stringify({
       jsonrpc: "2.0",
       method: "register",
       params: {
         browserId: browserName,
+        instanceId,
         token: token || "",
         userAgent: navigator.userAgent,
         extensionVersion: "0.4.1",
