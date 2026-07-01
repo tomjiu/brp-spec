@@ -148,6 +148,133 @@ pub async fn handle_request(
             }
         }
 
+        // ── Permission Management (v2) ──
+        "permission.query" => {
+            let s = state.read().await;
+            let perms = &s.session.permissions.permissions;
+            let list: Vec<Value> = perms
+                .iter()
+                .map(|p| {
+                    json!({
+                        "resource": p.resource,
+                        "read": p.read,
+                        "write": p.write,
+                        "delete": p.delete,
+                    })
+                })
+                .collect();
+            Response::success(id, json!({ "permissions": list }))
+        }
+
+        "permission.request" => {
+            let resource = req
+                .params
+                .as_ref()
+                .and_then(|p| p.get("resource"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let read = req
+                .params
+                .as_ref()
+                .and_then(|p| p.get("read"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let write = req
+                .params
+                .as_ref()
+                .and_then(|p| p.get("write"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let delete = req
+                .params
+                .as_ref()
+                .and_then(|p| p.get("delete"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            if resource.is_empty() {
+                return Response::error(
+                    id,
+                    ErrorResponse {
+                        code: -32602,
+                        message: "resource is required".into(),
+                        data: Some(json!({"errorCode": "BRP_INVALID_PARAMS", "retriable": false})),
+                    },
+                );
+            }
+
+            {
+                let mut s = state.write().await;
+                s.session
+                    .permissions
+                    .grant(resource.to_string(), read, write, delete);
+            }
+
+            // Notify extension of permission change
+            let sender = {
+                let s = state.read().await;
+                s.get_sender(None).map(|(_, s)| s.clone())
+            };
+            if let Some(sender) = sender {
+                let notification = json!({
+                    "jsonrpc": "2.0",
+                    "method": "notification/permissionChanged",
+                    "params": {
+                        "resource": resource,
+                        "read": read,
+                        "write": write,
+                        "delete": delete,
+                    }
+                });
+                let _ = sender
+                    .lock()
+                    .await
+                    .send(WsMessage::Text(notification.to_string().into()))
+                    .await;
+            }
+
+            Response::success(
+                id,
+                json!({
+                    "granted": true,
+                    "resource": resource,
+                    "read": read,
+                    "write": write,
+                    "delete": delete,
+                }),
+            )
+        }
+
+        "permission.revoke" => {
+            let resource = req
+                .params
+                .as_ref()
+                .and_then(|p| p.get("resource"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if resource.is_empty() {
+                return Response::error(
+                    id,
+                    ErrorResponse {
+                        code: -32602,
+                        message: "resource is required".into(),
+                        data: Some(json!({"errorCode": "BRP_INVALID_PARAMS", "retriable": false})),
+                    },
+                );
+            }
+
+            {
+                let mut s = state.write().await;
+                s.session
+                    .permissions
+                    .permissions
+                    .retain(|p| p.resource != resource);
+            }
+
+            Response::success(id, json!({ "revoked": true, "resource": resource }))
+        }
+
         // ── Lifecycle: handled locally ──
         "initialize" => {
             let params: InitializeParams = req
@@ -261,6 +388,30 @@ pub async fn handle_request(
                             data: Some(json!({
                                 "errorCode": error_codes::BRP_SESSION_UNINITIALIZED,
                                 "retriable": false
+                            })),
+                        },
+                    );
+                }
+            }
+
+            // Permission check — applies to methods that require explicit user grants
+            if let Some((resource, action)) = method_permission(&method) {
+                let s = state.read().await;
+                if !s.session.permissions.check(resource, action) {
+                    return Response::error(
+                        id,
+                        ErrorResponse {
+                            code: -32007,
+                            message: format!(
+                                "Permission denied: {}.{} requires {} access",
+                                resource, method, action
+                            ),
+                            data: Some(json!({
+                                "errorCode": error_codes::BRP_PERMISSION_DENIED,
+                                "retriable": false,
+                                "resource": resource,
+                                "action": action,
+                                "recoveryHint": "Request permission via permission.request"
                             })),
                         },
                     );

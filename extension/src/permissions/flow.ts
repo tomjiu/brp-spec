@@ -5,10 +5,15 @@
  * handles dialog display, timeout, and response.
  *
  * Separated from background.ts for testability.
+ *
+ * v0.9.0: delegates resource-level permission checks to Permission Model v2
+ * when the method maps to a v2 resource (cookie/tab/script/clipboard/downloads).
  */
 
 import { shouldGate, isAllowlisted, isBlacklisted } from "./checker";
 import { loadConfig, type PermissionGateConfig } from "./config";
+import { lookupPolicy } from "./flow-v2";
+import { methodResourceAction } from "./config-v2";
 import type { JsonObject, MessageId } from "../types";
 
 const PERMISSION_TIMEOUT = 60000; // 60s
@@ -48,6 +53,28 @@ export async function checkPermission(
   method: string,
   params: Record<string, unknown> | undefined,
 ): Promise<JsonObject | null> {
+  // ── v2 resource-level permission check (added v0.9.0) ──
+  const ra = methodResourceAction(method);
+  if (ra) {
+    const policy = await lookupPolicy(method);
+    // "deny" → block immediately
+    if (policy?.policy === "deny") {
+      return {
+        code: -32007,
+        message: `Permission denied: ${ra.resource}.${ra.action}`,
+        data: {
+          errorCode: "BRP_PERMISSION_DENIED",
+          retriable: false,
+          resource: ra.resource,
+          action: ra.action,
+          recoveryHint: "Request permission via permission.request",
+        },
+      };
+    }
+    // "always" → pass through (already granted at resource level)
+    // "ask" → fall through to existing E1/E2 dialog
+  }
+
   const config = await getPermConfig();
   const decision = shouldGate(method, params || {}, config);
 
