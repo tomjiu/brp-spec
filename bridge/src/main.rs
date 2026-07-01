@@ -100,7 +100,7 @@ async fn run_echo() {
         }
     })
     .await
-    .unwrap();
+    .expect("echo mode task panicked");
 }
 
 // ─── Bootstrap Mode (Firefox connectNative token delivery) ───

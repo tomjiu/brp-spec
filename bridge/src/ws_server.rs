@@ -119,6 +119,7 @@ async fn run_accept_loop(
             }
             Err(e) => {
                 log::error!("[WsServer] Accept error: {}", e);
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             }
         }
     }
@@ -357,7 +358,8 @@ pub async fn handle_ext_messages(
 
                             if let Some((client_id, tx, _bid)) = pending {
                                 let mut resp = value.clone();
-                                resp["id"] = serde_json::to_value(&client_id).unwrap();
+                                resp["id"] = serde_json::to_value(&client_id)
+                                    .expect("message id serialization should not fail");
                                 if let Some(result) = resp.get_mut("result") {
                                     if let Some(obj) = result.as_object_mut() {
                                         obj.insert("browserId".into(), json!(browser_id));

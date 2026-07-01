@@ -162,7 +162,11 @@ pub async fn handle_request(
 
             let mut s = state.write().await;
             let result = s.session.initialize(&params);
-            Response::success(id, serde_json::to_value(result).unwrap())
+            Response::success(
+                id,
+                serde_json::to_value(result)
+                    .expect("InitializeResult serialization should not fail"),
+            )
         }
 
         "shutdown" => {
