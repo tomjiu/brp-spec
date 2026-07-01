@@ -155,6 +155,7 @@ export function handleInitialize(params?: JsonObject): GeneratedInitializeResult
     protocolVersion: typeof protocolVersion === "string" ? protocolVersion : "0.1.0",
     negotiatedVersion: "0.1.0",
     serverInfo: { name: "brp-extension-gecko", version: "0.1.0" },
+    lastSequence: 0n,
     capabilities: {
       features: ["interactionTree", "events", "screenshot"],
       actions: [

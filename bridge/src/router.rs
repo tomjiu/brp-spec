@@ -158,6 +158,7 @@ pub async fn handle_request(
                     protocol_version: "0.1.0".into(),
                     client_info: None,
                     capabilities: None,
+                    session_id: None,
                 });
 
             let mut s = state.write().await;

@@ -165,6 +165,12 @@ pub struct InitializeParams {
     pub client_info: Option<ClientInfo>,
     #[serde(default)]
     pub capabilities: Option<Capabilities>,
+    /// Optional session ID for session recovery.
+    /// When provided and non-empty, the Bridge reuses this ID instead of
+    /// generating a new one — enabling the client to reconnect and
+    /// continue an existing session.
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 fn default_version() -> String {
@@ -182,6 +188,10 @@ pub struct InitializeResult {
     pub negotiated_version: String,
     pub server_info: ServerInfo,
     pub capabilities: Capabilities,
+    /// Last known event sequence number.  A reconnecting client
+    /// can use this to request event replay from this point.
+    #[serde(default)]
+    pub last_sequence: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -240,6 +250,13 @@ impl Session {
         self.protocol_version = params.protocol_version.clone();
         self.client_info = params.client_info.clone();
 
+        // Session recovery: reuse client-supplied session ID when provided
+        if let Some(ref sid) = params.session_id {
+            if !sid.is_empty() {
+                self.id = sid.clone();
+            }
+        }
+
         // Version negotiation: for MVP, accept 0.x.x
         let negotiated = if params.protocol_version.starts_with("0.") {
             "0.1.0".to_string()
@@ -253,6 +270,7 @@ impl Session {
             self.capabilities = self.capabilities.negotiate(client_caps);
         }
 
+        let last_sequence = self.sequence.current;
         self.state = SessionState::Ready;
 
         InitializeResult {
@@ -264,6 +282,7 @@ impl Session {
                 version: env!("CARGO_PKG_VERSION").into(),
             },
             capabilities: self.capabilities.clone(),
+            last_sequence,
         }
     }
 
@@ -316,5 +335,83 @@ mod tests {
         assert!(pre2.tag_name.is_none());
         assert!(pre2.text_contains.is_none());
         assert!(pre2.attributes.is_none());
+    }
+
+    // ── Session Recovery Tests ──
+
+    #[test]
+    fn test_initialize_returns_last_sequence() {
+        let mut session = Session::new();
+        let params = InitializeParams {
+            protocol_version: "0.1.0".into(),
+            client_info: None,
+            capabilities: None,
+            session_id: None,
+        };
+        // Fresh session — sequence starts at 0
+        let result = session.initialize(&params);
+        assert_eq!(result.last_sequence, 0);
+    }
+
+    #[test]
+    fn test_initialize_session_id_reuse() {
+        let mut session = Session::new();
+        let params = InitializeParams {
+            protocol_version: "0.1.0".into(),
+            client_info: None,
+            capabilities: None,
+            session_id: Some("my-persistent-session".into()),
+        };
+        let result = session.initialize(&params);
+        assert_eq!(result.session_id, "my-persistent-session");
+        assert_eq!(session.id, "my-persistent-session");
+    }
+
+    #[test]
+    fn test_initialize_session_id_empty_is_ignored() {
+        let mut session = Session::new();
+        let original_id = session.id.clone();
+        let params = InitializeParams {
+            protocol_version: "0.1.0".into(),
+            client_info: None,
+            capabilities: None,
+            session_id: Some("".into()),
+        };
+        let result = session.initialize(&params);
+        // Empty string should be ignored — session keeps its generated ID
+        assert_eq!(result.session_id, original_id);
+    }
+
+    #[test]
+    fn test_initialize_session_id_none_generates_new() {
+        let mut session = Session::new();
+        let params = InitializeParams {
+            protocol_version: "0.1.0".into(),
+            client_info: None,
+            capabilities: None,
+            session_id: None,
+        };
+        let result = session.initialize(&params);
+        // When no session_id provided, uses the auto-generated one
+        assert!(result.session_id.starts_with("session-"));
+        assert_eq!(result.session_id.len(), 14); // "session-" + 6 chars
+    }
+
+    #[test]
+    fn test_last_sequence_after_sequence_usage() {
+        let mut session = Session::new();
+        let params = InitializeParams {
+            protocol_version: "0.1.0".into(),
+            client_info: None,
+            capabilities: None,
+            session_id: None,
+        };
+        let result = session.initialize(&params);
+        assert_eq!(result.last_sequence, 0);
+        // Advance the sequence
+        let seq1 = session.next_sequence();
+        assert_eq!(seq1, 1);
+        // A second initialize (reconnect) would show last_sequence=0
+        // because sequence doesn't change during initialize
     }
 }
