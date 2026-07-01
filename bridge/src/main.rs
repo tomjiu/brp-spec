@@ -213,6 +213,14 @@ async fn run_bootstrap() {
         return;
     }
 
+    // ── Write active-bridge discovery file for MCP adapter reuse ──
+    let loopback_secret = config.auth_token.clone();
+    let _ = lockfile::write_active_bridge(&lockfile::ActiveBridge {
+        pid: std::process::id(),
+        port: ws_addr.port(),
+        loopback_secret,
+    });
+
     log::info!("[Bootstrap] Token delivered, waiting for extension WS connection...");
 
     // ── 5. Wait for WS connection (30s timeout) or Ctrl+C ──
@@ -246,6 +254,7 @@ async fn run_bootstrap() {
     }
 
     lockfile::release();
+    lockfile::remove_active_bridge();
     log::info!("[Bootstrap] Exiting");
 }
 
@@ -337,6 +346,14 @@ async fn run_bridge() {
             log::info!("[Bridge] Port {} written to stdout", actual_port);
         }
 
+        // Write active-bridge discovery file for MCP adapter reuse
+        let loopback_secret = config.auth_token.clone();
+        let _ = lockfile::write_active_bridge(&lockfile::ActiveBridge {
+            pid: std::process::id(),
+            port: actual_port,
+            loopback_secret,
+        });
+
         let state = state.clone();
         let notify_tx = notify_tx.clone();
         let token_manager = token_manager.clone();
@@ -351,6 +368,20 @@ async fn run_bridge() {
         let token_manager = token_manager.clone();
         tokio::spawn(async move {
             ws_server::run_ws_server(&ws_addr, token_manager, state, notify_tx).await;
+        });
+
+        // Write active-bridge discovery file for MCP adapter reuse
+        let loopback_secret = config.auth_token.clone();
+        let port: u16 = config
+            .ws_addr
+            .rsplit(':')
+            .next()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(9817);
+        let _ = lockfile::write_active_bridge(&lockfile::ActiveBridge {
+            pid: std::process::id(),
+            port,
+            loopback_secret,
         });
     }
 
@@ -407,4 +438,5 @@ async fn run_bridge() {
             break;
         }
     }
+    lockfile::remove_active_bridge();
 }

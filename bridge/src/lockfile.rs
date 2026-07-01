@@ -14,6 +14,10 @@
 ///        - PID alive → error "Bridge already running".
 ///        - PID dead  → clean stale lockfile, write new one.
 ///   2. On exit: remove lockfile.
+///
+/// Active Bridge Discovery (for MCP adapter):
+///   The Bridge also writes ~/.brp/active-bridge.json so the adapter
+///   can discover and reuse an already-running Bridge.
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::PathBuf;
@@ -33,7 +37,6 @@ fn lockfile_path() -> PathBuf {
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
         return PathBuf::from(dir).join("brp-bridge.lock");
     }
-    // macOS fallback: /tmp with UID
     let uid = unsafe { libc::getuid() };
     PathBuf::from(format!("/tmp/brp-bridge-{}.lock", uid))
 }
@@ -46,37 +49,35 @@ fn lockfile_path() -> PathBuf {
         .join("bridge.lock")
 }
 
-// ─── Platform-specific PID liveness ───
+// ─── PID liveness (cross-platform, public) ───
 
-#[cfg(unix)]
-fn is_pid_alive(pid: u32) -> bool {
-    // kill(pid, 0) checks without sending a signal
-    unsafe { libc::kill(pid as i32, 0) == 0 }
-}
-
-#[cfg(windows)]
-fn is_pid_alive(pid: u32) -> bool {
-    // OpenProcess with SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION
-    const SYNCHRONIZE: u32 = 0x00100000;
-    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
-    const STILL_ACTIVE: u32 = 259;
-
-    extern "system" {
-        fn OpenProcess(desired_access: u32, inherit: i32, pid: u32) -> *mut std::ffi::c_void;
-        fn GetExitCodeProcess(process: *mut std::ffi::c_void, exit_code: *mut u32) -> i32;
-        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+pub fn is_pid_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        unsafe { libc::kill(pid as i32, 0) == 0 }
     }
+    #[cfg(windows)]
+    {
+        const SYNCHRONIZE: u32 = 0x00100000;
+        const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+        const STILL_ACTIVE: u32 = 259;
 
-    let handle = unsafe { OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-    if handle.is_null() {
-        return false; // Can't open → process doesn't exist
+        extern "system" {
+            fn OpenProcess(desired_access: u32, inherit: i32, pid: u32) -> *mut std::ffi::c_void;
+            fn GetExitCodeProcess(process: *mut std::ffi::c_void, exit_code: *mut u32) -> i32;
+            fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+        }
+
+        let handle =
+            unsafe { OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            return false;
+        }
+        let mut exit_code: u32 = 0;
+        let ret = unsafe { GetExitCodeProcess(handle, &mut exit_code) };
+        unsafe { CloseHandle(handle) };
+        ret != 0 && exit_code == STILL_ACTIVE
     }
-
-    let mut exit_code: u32 = 0;
-    let ret = unsafe { GetExitCodeProcess(handle, &mut exit_code) };
-    unsafe { CloseHandle(handle) };
-
-    ret != 0 && exit_code == STILL_ACTIVE
 }
 
 // ─── Atomic write (write .tmp, sync, rename) ───
@@ -85,7 +86,6 @@ fn write_lockfile(data: &LockData) -> io::Result<()> {
     let path = lockfile_path();
     let tmp = path.with_extension("tmp");
 
-    // Ensure parent directory exists
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -93,13 +93,11 @@ fn write_lockfile(data: &LockData) -> io::Result<()> {
     let json = serde_json::to_vec(data)?;
     std::fs::write(&tmp, &json)?;
 
-    // Sync to disk before rename (crash-safe)
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let f = std::fs::OpenOptions::new().write(true).open(&tmp)?;
         f.sync_all()?;
-        // Restrict permissions on Unix
         let mut perms = f.metadata()?.permissions();
         perms.set_mode(0o600);
         f.set_permissions(perms)?;
@@ -116,7 +114,6 @@ fn write_lockfile(data: &LockData) -> io::Result<()> {
     Ok(())
 }
 
-/// Read and parse an existing lockfile.
 fn read_lockfile() -> io::Result<LockData> {
     let path = lockfile_path();
     let bytes = std::fs::read(&path)?;
@@ -129,7 +126,6 @@ fn read_lockfile() -> io::Result<LockData> {
     Ok(data)
 }
 
-/// Remove the lockfile on shutdown.
 fn remove_lockfile() {
     let path = lockfile_path();
     if path.exists() {
@@ -141,9 +137,6 @@ fn remove_lockfile() {
     }
 }
 
-/// Startup: acquire the PID lockfile.
-/// Returns the port from a *live* existing bridge, if one is already running
-/// (for better error messaging).
 pub fn acquire(data: LockData) -> io::Result<()> {
     let path = lockfile_path();
 
@@ -159,7 +152,6 @@ pub fn acquire(data: LockData) -> io::Result<()> {
                         ),
                     ));
                 }
-                // PID dead → stale lockfile
                 log::warn!(
                     "[Lockfile] Detected stale lockfile (PID {} is dead), cleaning up: {}",
                     existing.pid,
@@ -168,7 +160,6 @@ pub fn acquire(data: LockData) -> io::Result<()> {
                 let _ = std::fs::remove_file(&path);
             }
             Err(_) => {
-                // Corrupt lockfile → clean it up
                 log::warn!(
                     "[Lockfile] Corrupt lockfile, cleaning up: {}",
                     path.display()
@@ -181,9 +172,83 @@ pub fn acquire(data: LockData) -> io::Result<()> {
     write_lockfile(&data)
 }
 
-/// Release the lockfile on shutdown.
 pub fn release() {
     remove_lockfile();
+}
+
+// ─── Active Bridge Discovery ───
+///
+/// When the Bridge starts, it writes a discovery file so the MCP adapter
+/// can find and reuse it instead of spawning a duplicate Bridge.
+///
+/// Path: `~/.brp/active-bridge.json` (0600 on Unix)
+/// Format: `{"pid": <pid>, "port": <ws_port>, "loopback_secret": "<token>"}`
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ActiveBridge {
+    pub pid: u32,
+    pub port: u16,
+    pub loopback_secret: String,
+}
+
+fn active_bridge_path() -> PathBuf {
+    #[cfg(unix)]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(".brp").join("active-bridge.json");
+        }
+        PathBuf::from("/tmp/brp-active-bridge.json")
+    }
+    #[cfg(windows)]
+    {
+        let localappdata = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into());
+        PathBuf::from(localappdata)
+            .join("brp-bridge")
+            .join("active-bridge.json")
+    }
+}
+
+pub fn write_active_bridge(data: &ActiveBridge) -> io::Result<()> {
+    let path = active_bridge_path();
+    let tmp = path.with_extension("tmp");
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let json = serde_json::to_vec(data)?;
+    std::fs::write(&tmp, &json)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let f = std::fs::OpenOptions::new().write(true).open(&tmp)?;
+        f.sync_all()?;
+        let mut perms = f.metadata()?.permissions();
+        perms.set_mode(0o600);
+        f.set_permissions(perms)?;
+    }
+
+    std::fs::rename(&tmp, &path)?;
+
+    log::info!(
+        "[ActiveBridge] Written: {} (pid={}, port={})",
+        path.display(),
+        data.pid,
+        data.port
+    );
+    Ok(())
+}
+
+pub fn remove_active_bridge() {
+    let path = active_bridge_path();
+    if path.exists() {
+        if let Err(e) = std::fs::remove_file(&path) {
+            log::error!("[ActiveBridge] Failed to remove {}: {}", path.display(), e);
+        } else {
+            log::info!("[ActiveBridge] Removed: {}", path.display());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -232,7 +297,6 @@ mod tests {
         };
         test_write(&dead_data, &path);
 
-        // PID 99999 is almost certainly not alive
         assert!(!is_pid_alive(99999), "PID 99999 should be dead");
 
         std::fs::remove_file(&path).unwrap();
@@ -249,15 +313,11 @@ mod tests {
         let path = test_lockfile_path();
         let tmp = path.with_extension("tmp");
 
-        // Write partial content to tmp, simulate crash
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&tmp, b"{broken json").unwrap();
-        // Don't rename — crash mid-write
 
-        // Verify no partial lockfile exists
         assert!(!path.exists(), "no lockfile should exist without rename");
 
-        // Clean up tmp
         let _ = std::fs::remove_file(&tmp);
     }
 }
