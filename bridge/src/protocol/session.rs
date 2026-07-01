@@ -8,6 +8,51 @@ use std::collections::{HashMap, HashSet};
 use ts_rs::TS;
 use uuid::Uuid;
 
+// ─── Protocol Version Negotiation ───
+
+/// Bridge's maximum supported protocol version.
+const BRIDGE_PROTOCOL_VERSION: &str = "0.1.0";
+
+/// Parse a semver string into (major, minor, patch).
+/// Returns `None` if the version string is not valid semver.
+fn parse_semver(v: &str) -> Option<(u32, u32, u32)> {
+    let parts: Vec<&str> = v.split('.').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let major = parts[0].parse::<u32>().ok()?;
+    let minor = parts[1].parse::<u32>().ok()?;
+    let patch = parts[2].parse::<u32>().ok()?;
+    Some((major, minor, patch))
+}
+
+/// Negotiate the highest mutually-compatible protocol version.
+///
+/// Semver negotiation rules:
+/// - 0.x.y: lower minor version wins (max backward compat within pre-1.0)
+/// - 1.x+: same major required; higher patch negotiates to bridge's version
+/// - Unparseable versions: fall back to bridge's version
+fn negotiate_version(client_version: &str, bridge_version: &str) -> String {
+    let client = parse_semver(client_version);
+    let bridge = parse_semver(bridge_version);
+
+    match (client, bridge) {
+        (Some((0, c_minor, _)), Some((0, b_minor, _))) => {
+            // Pre-1.0: both on 0.x.y; negotiate to lower minor for max compat
+            let negotiated_minor = c_minor.min(b_minor);
+            format!("0.{}.0", negotiated_minor)
+        }
+        (Some((c_major, _, _)), Some((b_major, _, _))) if c_major == b_major => {
+            // Same stable major — use bridge version
+            bridge_version.to_string()
+        }
+        _ => {
+            // Incompatible or unparseable — safest fallback
+            bridge_version.to_string()
+        }
+    }
+}
+
 // ─── Session State ───
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -168,7 +213,7 @@ pub struct InitializeParams {
 }
 
 fn default_version() -> String {
-    "0.1.0".into()
+    BRIDGE_PROTOCOL_VERSION.into()
 }
 
 // ─── Initialize Result ───
@@ -244,12 +289,8 @@ impl Session {
         self.protocol_version = params.protocol_version.clone();
         self.client_info = params.client_info.clone();
 
-        // Version negotiation: for MVP, accept 0.x.x
-        let negotiated = if params.protocol_version.starts_with("0.") {
-            "0.1.0".to_string()
-        } else {
-            self.protocol_version.clone()
-        };
+        // Version negotiation: find the highest mutually-compatible protocol version
+        let negotiated = negotiate_version(&params.protocol_version, BRIDGE_PROTOCOL_VERSION);
         self.negotiated_version = negotiated.clone();
 
         // Capability negotiation
@@ -369,6 +410,20 @@ mod tests {
         let params = InitializeParams {
             protocol_version: "0.1.0".into(),
             client_info: None,
+            capabilities: Some(Capabilities::default()),
+        };
+        let result = session.initialize(&params);
+        assert_eq!(result.capabilities.actions.len(), 7); // bridge defaults
+    }
+
+    // ── Version Negotiation Tests ──
+
+    #[test]
+    fn test_negotiate_version_same() {
+        let mut session = Session::new();
+        let params = InitializeParams {
+            protocol_version: "0.1.0".into(),
+            client_info: None,
             capabilities: None,
         };
         let result = session.initialize(&params);
@@ -400,5 +455,86 @@ mod tests {
             .negotiated_capabilities
             .iter()
             .any(|a| a.ends_with(".*")));
+        assert_eq!(result.negotiated_version, "0.1.0");
+    }
+
+    #[test]
+    fn test_negotiate_version_client_newer() {
+        // Client sends 0.5.0, bridge supports 0.1.0 → negotiate to bridge's max (0.1.0)
+        let mut session = Session::new();
+        let params = InitializeParams {
+            protocol_version: "0.5.0".into(),
+            client_info: None,
+            capabilities: None,
+        };
+        let result = session.initialize(&params);
+        assert_eq!(result.negotiated_version, "0.1.0");
+    }
+
+    #[test]
+    fn test_negotiate_version_both_newer() {
+        // Client 0.3.0, bridge 0.1.0 → min(3,1) → 0.1.0
+        let mut session = Session::new();
+        let params = InitializeParams {
+            protocol_version: "0.3.0".into(),
+            client_info: None,
+            capabilities: None,
+        };
+        let result = session.initialize(&params);
+        assert_eq!(result.negotiated_version, "0.1.0");
+    }
+
+    #[test]
+    fn test_negotiate_version_client_older() {
+        // Client sends 0.0.0, bridge 0.1.0 → negotiate to 0.0.0
+        let mut session = Session::new();
+        let params = InitializeParams {
+            protocol_version: "0.0.0".into(),
+            client_info: None,
+            capabilities: None,
+        };
+        let result = session.initialize(&params);
+        assert_eq!(result.negotiated_version, "0.0.0");
+    }
+
+    #[test]
+    fn test_negotiate_version_client_1_x() {
+        // Client sends 1.0.0 — same major as bridge default "0.1.0"? No, different major.
+        // Falls back to bridge version.
+        let mut session = Session::new();
+        let params = InitializeParams {
+            protocol_version: "1.0.0".into(),
+            client_info: None,
+            capabilities: None,
+        };
+        let result = session.initialize(&params);
+        assert_eq!(result.negotiated_version, BRIDGE_PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn test_negotiate_version_invalid_format() {
+        // Unparseable version falls back to bridge version
+        let mut session = Session::new();
+        let params = InitializeParams {
+            protocol_version: "not-a-version".into(),
+            client_info: None,
+            capabilities: None,
+        };
+        let result = session.initialize(&params);
+        assert_eq!(result.negotiated_version, BRIDGE_PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn test_negotiate_version_empty_string() {
+        // Empty string → default "0.1.0" from InitializeParams, negotiates to 0.0.0
+        let mut session = Session::new();
+        let params = InitializeParams {
+            protocol_version: "".into(),
+            client_info: None,
+            capabilities: None,
+        };
+        let result = session.initialize(&params);
+        // Empty string is unparseable → falls back to bridge version
+        assert_eq!(result.negotiated_version, BRIDGE_PROTOCOL_VERSION);
     }
 }
