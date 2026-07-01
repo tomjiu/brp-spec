@@ -169,9 +169,7 @@ async fn run_bootstrap() {
                 return;
             }
         }
-        log::error!(
-            "[Bootstrap] No existing Bridge found. Exiting without token delivery."
-        );
+        log::error!("[Bootstrap] No existing Bridge found. Exiting without token delivery.");
         return;
     }
 
