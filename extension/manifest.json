@@ -48,7 +48,8 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "brp-bridge@brp-spec.org",
-      "strict_min_version": "109.0"
+      "strict_min_version": "139.0",
+      "data_collection_permissions": []
     }
   }
 }
