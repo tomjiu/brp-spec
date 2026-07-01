@@ -53,13 +53,13 @@ fn lockfile_path() -> PathBuf {
 // ─── Platform-specific PID liveness ───
 
 #[cfg(unix)]
-fn is_pid_alive(pid: u32) -> bool {
+fn is_pid_alive_impl(pid: u32) -> bool {
     // kill(pid, 0) checks without sending a signal
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
 #[cfg(windows)]
-fn is_pid_alive(pid: u32) -> bool {
+fn is_pid_alive_impl(pid: u32) -> bool {
     // OpenProcess with SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION
     const SYNCHRONIZE: u32 = 0x00100000;
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
@@ -133,6 +133,23 @@ fn read_lockfile() -> io::Result<LockData> {
     Ok(data)
 }
 
+/// Read the existing lockfile (for discovery by other processes like Bootstrap mode).
+/// Returns None if the lockfile doesn't exist or can't be parsed.
+pub fn read() -> Option<LockData> {
+    match read_lockfile() {
+        Ok(data) => Some(data),
+        Err(e) => {
+            log::warn!("[Lockfile] Read failed: {}", e);
+            None
+        }
+    }
+}
+
+/// Check if a PID is alive (platform-specific). Re-exported from private fn.
+pub fn is_pid_alive(pid: u32) -> bool {
+    is_pid_alive_impl(pid)
+}
+
 /// Remove the lockfile on shutdown.
 fn remove_lockfile() {
     let path = lockfile_path();
@@ -154,7 +171,7 @@ pub fn acquire(data: LockData) -> io::Result<()> {
     if path.exists() {
         match read_lockfile() {
             Ok(existing) => {
-                if is_pid_alive(existing.pid) {
+                if is_pid_alive_impl(existing.pid) {
                     return Err(io::Error::new(
                         io::ErrorKind::AddrInUse,
                         format!(
