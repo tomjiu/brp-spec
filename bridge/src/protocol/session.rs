@@ -442,7 +442,7 @@ mod tests {
             client_info: None,
             capabilities: None,
         };
-        session.initialize(&params);
+        let result = session.initialize(&params);
 
         // bridge_default capabilities contain wildcards
         assert!(session
@@ -536,5 +536,18 @@ mod tests {
         let result = session.initialize(&params);
         // Empty string is unparseable → falls back to bridge version
         assert_eq!(result.negotiated_version, BRIDGE_PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn test_negotiate_version_same_major_1x() {
+        // client 1.2.3, bridge 1.5.0 → same major → returns bridge version
+        let result = negotiate_version("1.2.3", "1.5.0");
+        assert_eq!(result, "1.5.0");
+    }
+
+    #[test]
+    fn test_negotiate_version_same_major_2x() {
+        let result = negotiate_version("2.0.0", "2.1.1");
+        assert_eq!(result, "2.1.1");
     }
 }
