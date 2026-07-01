@@ -142,6 +142,14 @@
 - [x] **Bridge Auto-Connect** IPC lock + localhost token skip
 - [x] **Release Workflow** bridge binaries + extension xpi
 
+## v0.9.0 — Protocol Hardening [x]
+
+- [x] **Capability Enforce** Negotiated capabilities enforced at router level (-32005)
+- [x] **Version Negotiation** Semver-based negotiation with fallback strategy
+- [x] **Session Recovery** Session ID reuse, lastSequence, 30s retention, sessionResumed
+- [x] **Permission Model v2** Resource-level permissions (read/write/delete) (-32007)
+- [x] **Multi-Instance** instanceId routing with backward-compatible fallback
+
 ## v1.0-pre — Stable API + Compat [ ]
 
 - [ ] supportsAutoLink capability negotiation + backward compatibility matrix
