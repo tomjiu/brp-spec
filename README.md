@@ -1,6 +1,6 @@
-# BRP — Browser Runtime Protocol v0.7.0
+# BRP — Browser Runtime Protocol v0.9.0
 
-MVP implementation of the Browser Runtime Protocol (BRP): a Firefox/Zen extension + Rust Bridge that enables AI agents to interact with the user's real browser session.
+Firefox 浏览器 AI 控制插件。通过 Rust Bridge + Firefox Extension 实现 AI Agent（Claude、Cursor、Codex）对真实浏览器的操控。
 
 ## Quick Start
 
@@ -26,6 +26,8 @@ BRP_STANDALONE=1 ./bridge/target/release/brp-bridge
 
 For MCP client setup, see [docs/USAGE-MODES.md](docs/USAGE-MODES.md).
 Full protocol reference: [docs/API.md](docs/API.md).
+
+**New in v0.9**: [Architecture](docs/ARCHITECTURE.md) / [Recovery Protocol](docs/RECOVERY_PROTOCOL.md) / [Implementation Gap](docs/IMPLEMENTATION_GAP.md)
 
 ## Architecture
 

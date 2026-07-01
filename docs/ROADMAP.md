@@ -1,6 +1,6 @@
 # BRP Development Roadmap
 
-> Last updated: 2026-06-29
+> Last updated: 2026-07-01
 
 ## Legend
 
@@ -144,13 +144,19 @@
 
 ## v0.9.0 — Protocol Hardening [x]
 
-- [x] **Capability Enforce** Negotiated capabilities enforced at router level (-32005)
-- [x] **Version Negotiation** Semver-based negotiation with fallback strategy
-- [x] **Session Recovery** Session ID reuse, lastSequence, 30s retention, sessionResumed
-- [x] **Permission Model v2** Resource-level permissions (read/write/delete) (-32007)
-- [x] **Multi-Instance** instanceId routing with backward-compatible fallback
+- [x] **Capability Enforce** (#68) Negotiated capabilities enforced (-32005)
+- [x] **Version Negotiation** (#69) Semver-based with same-major 1.x+ support
+- [x] **Security Hardening** (#75) Loopback bypass removed, WS backoff, unwrap elimination
+- [x] **Error Model** (#75) Category field in all error responses
+- [x] **Bridge Discovery** (#75) Unified discovery via lockfile + register_client WS
+- [~] **Session Recovery** (#70-71) Deferred to v1.0
+- [~] **Permission Model v2** (#72) Deferred to v1.0
+- [~] **Multi-Instance** (#73) Deferred to v1.0
 
-## v1.0-pre — Stable API + Compat [ ]
+## v1.0 — Stable API + Compat [ ]
 
+- [ ] Session Recovery (sessionId reuse + 30s retention from #70-71)
+- [ ] Permission Model v2 (resource-level access control from #72)
+- [ ] Multi-Instance (instanceId routing from #73)
 - [ ] supportsAutoLink capability negotiation + backward compatibility matrix
 - [ ] Multi-browser compatibility test matrix (Firefox / Zen / LibreWolf)

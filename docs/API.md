@@ -548,15 +548,21 @@ Delete a URL from browser history.
 
 All errors are JSON-RPC 2.0 server errors (-32000 to -32099).
 
-| Code | Error Code | Description |
-|------|-----------|-------------|
-| -32001 | `BRP_PERMISSION_DENIED` | User denied E1 permission dialog |
-| -32002 | `BRP_USER_BLOCKED_DOMAIN` | Domain is in E2 blacklist |
-| -32003 | `BRP_TAB_NOT_CONTROLLABLE` | Tab is not marked as controllable |
-| -32004 | `BRP_HISTORY_PERMISSION_NOT_GRANTED` | History optional permission not granted |
-| -32005 | `BRP_CAPABILITY_NOT_SUPPORTED` | Method not in negotiated capabilities |
-| -32601 | `BRP_METHOD_NOT_FOUND` | Unknown method |
-| -32000 | `BRP_INTERNAL_ERROR` | Internal extension error |
+| Code | Error Code | Category | Description |
+|------|-----------|----------|-------------|
+| -32001 | `BRP_PERMISSION_DENIED` | PERMISSION | User denied E1 permission dialog |
+| -32002 | `BRP_USER_BLOCKED_DOMAIN` | PERMISSION | Domain is in E2 blacklist |
+| -32003 | `BRP_TAB_NOT_CONTROLLABLE` | PERMISSION | Tab is not marked as controllable |
+| -32004 | `BRP_HISTORY_PERMISSION_NOT_GRANTED` | PERMISSION | History optional permission not granted |
+| -32005 | `BRP_CAPABILITY_NOT_SUPPORTED` | CAPABILITY | Method not in negotiated capabilities |
+| -32601 | `BRP_METHOD_NOT_FOUND` | CAPABILITY | Unknown method |
+| -32000 | `BRP_INTERNAL_ERROR` | INTERNAL | Internal extension error |
+| -32001 | `BRP_MASTER_TOKEN_REQUIRED` | AUTH | Master token required |
+| -32001 | `BRP_EXTENSION_DISCONNECTED` | TARGET | No extension connected |
+| -32000 | `BRP_TIMEOUT` | INTERNAL | Request timed out |
+| -32000 | `BRP_MESSAGE_TOO_LARGE` | INTERNAL | Message exceeds size limit |
+| -32000 | `BRP_SESSION_UNINITIALIZED` | INTERNAL | Session not initialized |
+| -32000 | `BRP_URL_SCHEME_BLOCKED` | PERMISSION | URL scheme not allowed |
 
 ### 9.1 Error Response Format
 
@@ -569,6 +575,7 @@ All errors are JSON-RPC 2.0 server errors (-32000 to -32099).
     "message": "User denied permission for script.execute",
     "data": {
       "errorCode": "BRP_PERMISSION_DENIED",
+      "category": "PERMISSION",
       "retriable": false
     }
   }

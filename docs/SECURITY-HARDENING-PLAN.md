@@ -345,3 +345,12 @@ Phase 1 (P0) ──→ Phase 2A + 2B (P1) ──→ Phase 3 (P1) ──→ Phase
 | No WeakRef for DOM cache | Content script lifecycle already handles cleanup on navigation; per-snapshot clear is sufficient |
 | `script.execute` off by default | Defense-in-depth; explicit opt-in for most dangerous capability |
 | Per-snapshot nodeId cleanup over WeakRef | Simpler, more predictable, sufficient for preventing leaks in MVP |
+
+## v0.9 Hardening (Completed)
+
+| Fix | Status | PR |
+|-----|--------|-----|
+| Loopback trust model bypass removed | ✅ Fixed | #75 |
+| WS accept error backoff (100ms) | ✅ Fixed | #75 |
+| Production unwrap() eliminated | ✅ Fixed | #75 |
+| Error responses include category field | ✅ Fixed | #75 |
