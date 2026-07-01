@@ -2,4 +2,11 @@
 import type { Capabilities } from "./Capabilities";
 import type { ClientInfo } from "./ClientInfo";
 
-export type InitializeParams = { protocolVersion: string, clientInfo: ClientInfo | null, capabilities: Capabilities | null, };
+export type InitializeParams = { protocolVersion: string, clientInfo: ClientInfo | null, capabilities: Capabilities | null, 
+/**
+ * Optional session ID for session recovery.
+ * When provided and non-empty, the Bridge reuses this ID instead of
+ * generating a new one — enabling the client to reconnect and
+ * continue an existing session.
+ */
+sessionId: string | null, };

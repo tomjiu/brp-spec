@@ -495,7 +495,7 @@ async function handleRequest(msg: JsonRpcRequest): Promise<void> {
 }
 
 function handleInitialize(params?: JsonObject): JsonObject {
-  return handleInitializePure(params);
+  return handleInitializePure(params) as unknown as JsonObject;
 }
 
 async function handleShutdown(): Promise<JsonObject> {

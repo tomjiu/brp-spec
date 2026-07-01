@@ -2,4 +2,9 @@
 import type { Capabilities } from "./Capabilities";
 import type { ServerInfo } from "./ServerInfo";
 
-export type InitializeResult = { sessionId: string, protocolVersion: string, negotiatedVersion: string, serverInfo: ServerInfo, capabilities: Capabilities, };
+export type InitializeResult = { sessionId: string, protocolVersion: string, negotiatedVersion: string, serverInfo: ServerInfo, capabilities: Capabilities, 
+/**
+ * Last known event sequence number.  A reconnecting client
+ * can use this to request event replay from this point.
+ */
+lastSequence: bigint, };
