@@ -113,3 +113,45 @@ jobs:
             adapter/brp_mcp_adapter.py
             install.sh
             install.ps1
+
+  deploy-amo:
+    name: Submit to AMO (Firefox Store)
+    needs: [build-extension]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install + build extension
+        working-directory: extension
+        run: |
+          npm ci
+          npm run prebuild
+          npm run build
+
+      - name: Install web-ext
+        run: npm install -g web-ext
+
+      - name: Submit to AMO
+        env:
+          AMO_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          if [ -z "$AMO_ISSUER" ]; then
+            echo "::warning::AMO secrets not configured — skipping store submission"
+          else
+            web-ext sign \
+              --api-key="$AMO_ISSUER" \
+              --api-secret="$AMO_SECRET" \
+              --channel=listed \
+              --source-dir=extension
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always() && hashFiles('web-ext-artifacts/*.xpi') != ''
+        with:
+          name: brp-extension-signed-xpi
+          path: web-ext-artifacts/*.xpi
